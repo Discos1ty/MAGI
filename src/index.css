@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+:root{
+  /* ---- Clinical paper palette ---- */
+  --paper:      #F4F6F4;
+  --paper-raise:#FFFFFF;
+  --ink:        #121F1B;
+  --ink-dim:    #52655F;
+  --ink-faint:  #93A29C;
+  --line:       #DEE5E1;
+  --line-soft:  #EAEFEC;
+
+  --forest:     #2B6F58;
+  --forest-dim: rgba(43,111,88,.09);
+  --violet:     #675FA8;
+  --violet-dim: rgba(103,95,168,.09);
+  --rose:       #A85870;
+  --rose-dim:   rgba(168,88,112,.10);
+  --brick:      #B4472C;
+  --brick-dim:  rgba(180,71,44,.09);
+  --amber:      #AE7F27;
+  --amber-dim:  rgba(174,127,39,.12);
+  --sage:       #4B8A6F;
+
+  /* ---- Aurora accents ---- */
+  --green-light: #64E3A1;
+  --green-deep:  #41DC8E;
+}
+
+html,body{ margin:0; padding:0; }
+body{
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display{ font-family:'Fraunces', serif; }
+.font-mono{ font-family:'IBM Plex Mono', monospace; }
+
+::selection{ background: var(--forest); color:#fff; }
+
+/* ==========================================================================
+   AMBIENT AURORA BACKDROP
+   ========================================================================== */
+
+.ambient-background {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+}
+
+.aurora-blob-forest {
+  top: 0%;
+  left: 10%;
+  width: 50vw;
+  height: 50vh;
+  background: radial-gradient(circle, rgba(100,227,161,.55) 0%, rgba(100,227,161,.22) 50%, transparent 75%);
+  filter: blur(70px);
+  animation: floatAurora1 22s ease-in-out infinite alternate;
+}
+
+.aurora-blob-violet {
+  top: 30%;
+  right: 8%;
+  width: 46vw;
+  height: 46vh;
+  background: radial-gradient(circle, rgba(65,220,142,.50) 0%, rgba(65,220,142,.20) 50%, transparent 75%);
+  filter: blur(80px);
+  animation: floatAurora2 28s ease-in-out infinite alternate;
+}
+
+.aurora-blob-rose {
+  bottom: 5%;
+  left: 22%;
+  width: 42vw;
+  height: 42vh;
+  background: radial-gradient(circle, rgba(100,227,161,.45) 0%, rgba(65,220,142,.18) 50%, transparent 75%);
+  filter: blur(75px);
+  animation: floatAurora3 25s ease-in-out infinite alternate;
+}
+
+@keyframes floatAurora1 {
+  0%   { transform: translate(0,0) scale(1); }
+  50%  { transform: translate(-6%,8%) scale(1.08); }
+  100% { transform: translate(4%,-4%) scale(0.96); }
+}
+@keyframes floatAurora2 {
+  0%   { transform: translate(0,0) scale(1); }
+  50%  { transform: translate(8%,-6%) scale(0.94); }
+  100% { transform: translate(-5%,6%) scale(1.06); }
+}
+@keyframes floatAurora3 {
+  0%   { transform: translate(0,0) scale(1); }
+  50%  { transform: translate(-4%,-8%) scale(1.05); }
+  100% { transform: translate(6%,5%) scale(0.95); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-blob { animation: none !important; }
+}
