@@ -1,0 +1,14 @@
+cd /Users/divyanshuchaturvedi/Team-NERV
+cat > .gitignore << 'EOF'
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+venv/
+.venv/
+data/uploads/
+data/metadata/
+EOF.vite/
+backend/model_cache/

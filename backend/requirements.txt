@@ -1,0 +1,11 @@
+# Destination: backend/requirements.txt (replaces your current file)
+
+fastapi
+uvicorn[standard]
+pandas
+numpy
+scikit-learn
+joblib
+python-multipart
+pennylane
+xgboost

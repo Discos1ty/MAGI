@@ -1,4 +1,5 @@
-import { useState } from 'react'
+// Destination: src/components/Sidebar.jsx (replaces your current file)
+
 import { meta } from '../data.js'
 
 const NAV = [
@@ -8,9 +9,7 @@ const NAV = [
   { key: 'help', label: 'Help' },
 ]
 
-export default function Sidebar() {
-  const [active, setActive] = useState('dashboard')
-
+export default function Sidebar({ active, onNavigate }) {
   return (
     <aside className="hidden md:flex flex-col gap-8 w-[212px] flex-shrink-0 bg-[var(--paper-raise)] border-r border-[var(--line)] px-4 py-6">
       <div className="flex items-center gap-2.5 pb-5 border-b border-[var(--line)] px-1">
@@ -29,7 +28,7 @@ export default function Sidebar() {
         {NAV.map((item) => (
           <button
             key={item.key}
-            onClick={() => setActive(item.key)}
+            onClick={() => onNavigate(item.key)}
             className={`text-left text-[13px] font-medium px-3 py-2 rounded-[6px] transition-colors border-l-2 ${
               active === item.key
                 ? 'text-[var(--forest)] bg-[var(--forest-dim)] border-[var(--forest)]'
