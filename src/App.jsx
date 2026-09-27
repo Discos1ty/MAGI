@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import PatientCard from './components/PatientCard.jsx'
-import XaiCard from './components/XaiCard.jsx'
-import BiomarkerCard from './components/BiomarkerCard.jsx'
+import XaiCard from './components/XaiCard_old.jsx'
+import BiomarkerCard from './components/BiomarkerCard_old.jsx'
 import UploadCard from './components/UploadCard.jsx'
-import RiskCard from './components/RiskCard.jsx'
+import RiskCard from './components/RiskCard_old.jsx'
 import QuantumCard from './components/QuantumCard.jsx'
 import CdsCard from './components/CdsCard.jsx'
 import Disclaimer from './components/Disclaimer.jsx'
@@ -43,8 +43,8 @@ export default function App() {
             <div className="grid grid-cols-1 xl:grid-cols-[1.62fr_1fr] gap-5 items-start">
               <div className="flex flex-col gap-5">
                 <PatientCard />
-                <XaiCard />
-                <BiomarkerCard />
+                  <XaiCard xai={prediction} />
+  <BiomarkerCard xai={prediction} />
               </div>
 
               <div className="flex flex-col gap-5">

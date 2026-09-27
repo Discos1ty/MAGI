@@ -1,29 +1,31 @@
-// Destination: src/components/RiskCard.jsx (replaces your current file)
-
 import Card from './Card.jsx'
 import { risk } from '../data.js'
 
 export default function RiskCard({ prediction }) {
-  const classicalProb = prediction?.classical?.probability_malignant
+  if (!prediction) {
+    return (
+      <Card title="Diagnostic output & risk stratification" tag={risk.version} dot="var(--ink-faint)">
+        <p className="text-[13px] text-[var(--ink-dim)]">
+          Upload a single-patient CSV to see the risk score and model output.
+        </p>
+      </Card>
+    )
+  }
+
+  const { classical, quantum } = prediction
+  const classicalProb = classical.probability_malignant
   const isMalignant =
-    prediction?.classical?.prediction === 'malignant' ||
-    prediction?.quantum?.prediction === 'malignant'
+    classical.prediction === 'malignant' || quantum.prediction === 'malignant'
+  const agree = classical.prediction === quantum.prediction
 
-  // Live values when a prediction has come in, otherwise the original
-  // static demo data — CI / confidence / uncertainty stay on the demo
-  // values either way since the API doesn't currently return them.
-  const score = classicalProb != null ? classicalProb.toFixed(2) : risk.score
-  const label = prediction ? `Risk score — ${isMalignant ? 'High' : 'Low'}` : risk.label
-  const finding = prediction
-    ? `Classical: ${prediction.classical.prediction} (${(classicalProb * 100).toFixed(1)}%) · Quantum: ${prediction.quantum.prediction} (score ${prediction.quantum.raw_score})`
-    : risk.finding
+  const score = classicalProb.toFixed(2)
+  const label = `Risk score — ${isMalignant ? 'High' : 'Low'}`
+  const finding = `Classical: ${classical.prediction} (${(classicalProb * 100).toFixed(1)}%) · Quantum: ${quantum.prediction} (score ${quantum.raw_score})`
 
-  // Sweep the needle across the gauge based on malignancy probability
-  // (0 → far left/benign, 1 → far right/malignant). Keeps the original
-  // fixed rotation when there's no live prediction yet.
-  const rotation = classicalProb != null ? -75 + classicalProb * 150 : 15
-  const dotColor = !prediction || isMalignant ? 'var(--brick)' : 'var(--sage)'
-  const textColor = !prediction || isMalignant ? '#8A3320' : 'var(--forest)'
+  // 0 → far left (benign), 1 → far right (malignant)
+  const rotation = -75 + classicalProb * 150
+  const dotColor = isMalignant ? 'var(--brick)' : 'var(--sage)'
+  const textColor = isMalignant ? '#8A3320' : 'var(--forest)'
 
   return (
     <Card title="Diagnostic output & risk stratification" tag={risk.version} dot={dotColor}>
@@ -49,9 +51,9 @@ export default function RiskCard({ prediction }) {
       </div>
 
       <div className="flex justify-between mt-5 pt-4 border-t border-[var(--line-soft)]">
-        <Metric value={risk.ci} label="Confidence interval" />
-        <Metric value={risk.confidence} label="Model confidence" />
-        <Metric value={risk.uncertainty} label="Epistemic uncertainty" />
+        <Metric value={`${(classicalProb * 100).toFixed(1)}%`} label="XGBoost malignant prob." />
+        <Metric value={quantum.raw_score} label="VQC raw score" />
+        <Metric value={agree ? 'Agree' : 'Disagree'} label="Classical vs quantum" />
       </div>
 
       <p className="mt-4 pt-3 border-t border-[var(--line-soft)] text-[11px] text-[var(--ink-faint)] leading-relaxed">
