@@ -1,109 +1,189 @@
 @import "tailwindcss";
 
-:root{
-  /* ---- Clinical paper palette ---- */
-  --paper:      #F4F6F4;
-  --paper-raise:#FFFFFF;
-  --ink:        #121F1B;
-  --ink-dim:    #52655F;
-  --ink-faint:  #93A29C;
-  --line:       #DEE5E1;
-  --line-soft:  #EAEFEC;
-
-  --forest:     #2B6F58;
-  --forest-dim: rgba(43,111,88,.09);
-  --violet:     #675FA8;
-  --violet-dim: rgba(103,95,168,.09);
-  --rose:       #A85870;
-  --rose-dim:   rgba(168,88,112,.10);
-  --brick:      #B4472C;
-  --brick-dim:  rgba(180,71,44,.09);
-  --amber:      #AE7F27;
-  --amber-dim:  rgba(174,127,39,.12);
-  --sage:       #4B8A6F;
-
-  /* ---- Aurora accents ---- */
-  --green-light: #64E3A1;
-  --green-deep:  #41DC8E;
+@theme {
+  --font-serif: 'Newsreader', 'Instrument Serif', Georgia, serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-html,body{ margin:0; padding:0; }
-body{
-  background: var(--paper);
-  color: var(--ink);
-  font-family: 'IBM Plex Sans', sans-serif;
+:root {
+  /* Surfaces & Backgrounds */
+  --bg-base: #FAFAF7;       /* Warm clinical paper off-white */
+  --bg-surface: #FFFFFF;    /* Pure crisp white card surface */
+  --border: #E7E5E0;        /* Subtle warm gray divider */
+  --border-hover: #D1CFCA;  /* Darker border for hover interactions */
+
+  /* Text & Ink */
+  --text-primary: #14211F;   /* Deep clinical ink black/forest */
+  --text-secondary: #5B6664; /* Scholarly muted slate gray */
+
+  /* Semantic Accents */
+  --accent: #0F766E;        /* Deep surgical teal / primary brand accent */
+  --accent-hover: #0D655E;  /* Darker teal for button hovers */
+  --accent-active: #0B534E; /* Darkest teal for active button states */
+  --alert: #B45309;         /* Warm amber/rust for warnings */
+
+  /* Typography Families */
+  --font-heading: 'Newsreader', 'Instrument Serif', Georgia, serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+html {
+  background-color: #FAFAF7;
+  color: #14211F;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
 }
 
-.font-display{ font-family:'Fraunces', serif; }
-.font-mono{ font-family:'IBM Plex Mono', monospace; }
-
-::selection{ background: var(--forest); color:#fff; }
-
-/* ==========================================================================
-   AMBIENT AURORA BACKDROP
-   ========================================================================== */
-
-.ambient-background {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  overflow: hidden;
+body {
+  background-color: #FAFAF7;
+  color: #14211F;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
 }
 
-.aurora-blob {
-  position: absolute;
-  border-radius: 50%;
-  will-change: transform;
+.font-serif {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
-.aurora-blob-forest {
-  top: 0%;
-  left: 10%;
-  width: 50vw;
-  height: 50vh;
-  background: radial-gradient(circle, rgba(100,227,161,.55) 0%, rgba(100,227,161,.22) 50%, transparent 75%);
-  filter: blur(70px);
-  animation: floatAurora1 22s ease-in-out infinite alternate;
+.font-sans {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-.aurora-blob-violet {
-  top: 30%;
-  right: 8%;
-  width: 46vw;
-  height: 46vh;
-  background: radial-gradient(circle, rgba(65,220,142,.50) 0%, rgba(65,220,142,.20) 50%, transparent 75%);
-  filter: blur(80px);
-  animation: floatAurora2 28s ease-in-out infinite alternate;
+.font-tabular,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
-.aurora-blob-rose {
-  bottom: 5%;
-  left: 22%;
-  width: 42vw;
-  height: 42vh;
-  background: radial-gradient(circle, rgba(100,227,161,.45) 0%, rgba(65,220,142,.18) 50%, transparent 75%);
-  filter: blur(75px);
-  animation: floatAurora3 25s ease-in-out infinite alternate;
+/* Clinical Component Classes */
+.clinical-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: all 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes floatAurora1 {
-  0%   { transform: translate(0,0) scale(1); }
-  50%  { transform: translate(-6%,8%) scale(1.08); }
-  100% { transform: translate(4%,-4%) scale(0.96); }
-}
-@keyframes floatAurora2 {
-  0%   { transform: translate(0,0) scale(1); }
-  50%  { transform: translate(8%,-6%) scale(0.94); }
-  100% { transform: translate(-5%,6%) scale(1.06); }
-}
-@keyframes floatAurora3 {
-  0%   { transform: translate(0,0) scale(1); }
-  50%  { transform: translate(-4%,-8%) scale(1.05); }
-  100% { transform: translate(6%,5%) scale(0.95); }
+.clinical-card-interactive {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: all 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .aurora-blob { animation: none !important; }
+.clinical-card-interactive:hover {
+  border-color: #D1CFCA;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px -2px rgba(20, 33, 31, 0.05);
+}
+
+.clinical-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: #0F766E;
+  color: #FFFFFF;
+  border-radius: 10px;
+  border: 1px solid #0F766E;
+  font-family: var(--font-body);
+  font-weight: 500;
+  padding: 0.65rem 1.35rem;
+  font-size: 0.9375rem;
+  transition: all 180ms ease;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.clinical-btn-primary:hover {
+  background-color: #0D655E;
+  border-color: #0D655E;
+  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.25);
+}
+
+.clinical-btn-primary:active {
+  background-color: #0B534E;
+  transform: scale(0.985);
+}
+
+.clinical-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: #FFFFFF;
+  color: #14211F;
+  border: 1px solid #E7E5E0;
+  border-radius: 10px;
+  font-family: var(--font-body);
+  font-weight: 500;
+  padding: 0.65rem 1.35rem;
+  font-size: 0.9375rem;
+  transition: all 180ms ease;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.clinical-btn-secondary:hover {
+  border-color: #D1CFCA;
+  background-color: #F8F8F5;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+.clinical-btn-secondary:active {
+  background-color: #F0EFEA;
+  transform: scale(0.985);
+}
+
+.clinical-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-family: var(--font-body);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: 9999px;
+  background-color: #FFFFFF;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+/* Animations */
+@keyframes clinicalFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-clinical-fade {
+  animation: clinicalFadeIn 350ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #D1CFCA;
 }

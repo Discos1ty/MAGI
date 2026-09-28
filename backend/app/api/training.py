@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.services.dataset_store import load_dataset, load_dataset_metadata
+from app.services.dataset_service import extract_and_encode_target
 from app.services.training_pipeline import TrainingPipeline
 
 from app.models.experiment import (
@@ -25,19 +26,19 @@ router = APIRouter(
 @router.post("/run")
 def run_training(
     dataset_id: str,
-    model_type: str = "logistic_regression",
+    model_type: str = "xgboost",
+    target_column: str | None = None,
     db=Depends(get_db)
 ):
     supported_models = {
-        "logistic_regression",
+        "xgboost",
         "vqc",
-        "quantum_kernel_svm",
     }
 
     if model_type not in supported_models:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported model type: {model_type}"
+            detail=f"Unsupported model type: {model_type}. Supported models: 'xgboost', 'vqc'"
         )
 
     
@@ -47,35 +48,20 @@ def run_training(
         dataset_metadata = load_dataset_metadata(dataset_id)
 
         dataset_info = DatasetInfo(
-            name=dataset_metadata["filename"],
-            samples=dataset_metadata["rows"],
-            features=dataset_metadata["features"],
+            name=dataset_metadata.get("filename", "dataset.csv"),
+            samples=dataset_metadata.get("rows", len(df)),
+            features=dataset_metadata.get("features", df.shape[1] - 1),
         )
 
-        # 2. Identify target column
-        target_column = "Diagnosis"
+        # 2. Identify target column and extract features / target
+        if not target_column:
+            target_column = dataset_metadata.get("target_column")
 
-        if target_column not in df.columns:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Target column '{target_column}' was not found."
-            )
+        X, y, resolved_target_column = extract_and_encode_target(
+            df, target_column
+        )
 
-        # 3. Separate features and target
-        X = df.drop(columns=[target_column])
-
-        y = df[target_column].map({
-            "B": 0,
-            "M": 1
-        })
-
-        if y.isnull().any():
-            raise HTTPException(
-                status_code=400,
-                detail="Target contains unsupported or missing values."
-            )
-
-        # 4. Run training pipeline
+        # 3. Run training pipeline
         pipeline = TrainingPipeline()
 
         result = pipeline.run(
@@ -101,11 +87,9 @@ def run_training(
         )
 
         quantum_info = QuantumInfo(
-            simulator="default.qubit"
-            if model_type in {"vqc", "quantum_kernel_svm"}
-            else None,
+            simulator="default.qubit" if model_type == "vqc" else None,
             noise_model=None,
-            backend=None,
+            backend="PennyLane default.qubit" if model_type == "vqc" else None,
         )
 
         experiment_results = ExperimentResults(

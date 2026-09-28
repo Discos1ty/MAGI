@@ -8,9 +8,14 @@ from app.services.dataset_preparation import (
     combine_features_and_target
 )
 
-from app.services.dataset_store import save_dataset, list_datasets
-
-from app.services.dataset_store import load_dataset
+from app.services.dataset_store import (
+    save_dataset,
+    list_datasets,
+    load_dataset,
+    load_dataset_metadata,
+    PROJECT_ROOT
+)
+from app.services.dataset_service import extract_and_encode_target
 from app.services.preprocessing_service import PreprocessingPipeline
 
 
@@ -25,6 +30,45 @@ async def get_datasets():
     return {
         "status": "success",
         "datasets": list_datasets()
+    }
+
+
+@router.post("/sample/wdbc")
+async def load_sample_wdbc():
+    raw_path = PROJECT_ROOT / "data" / "raw" / "breast_cancer_dataset_full.csv"
+    if not raw_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Sample dataset not found at data/raw/breast_cancer_dataset_full.csv"
+        )
+
+    df = pd.read_csv(raw_path)
+    target_column = "target"
+    validation = validate_dataset(df, target_column)
+
+    dataset_id = save_dataset(
+        df,
+        filename="breast_cancer_dataset_full.csv",
+        target_column=target_column
+    )
+
+    return {
+        "status": "success",
+        "dataset_id": dataset_id,
+        "filename": "breast_cancer_dataset_full.csv",
+        "dataset": {
+            "rows": int(df.shape[0]),
+            "columns": int(df.shape[1]),
+            "features": int(df.shape[1] - 1),
+            "target_column": target_column,
+            "target_classes": df[target_column].dropna().unique().tolist()
+        },
+        "profile": {
+            "missing_values": int(df.isnull().sum().sum()),
+            "numeric_columns": int(df.select_dtypes(include="number").shape[1]),
+            "categorical_columns": int(df.select_dtypes(exclude="number").shape[1])
+        },
+        "validation": validation
     }
 
 
@@ -236,7 +280,8 @@ async def ingest_dataset(
         # Save dataset
         dataset_id = save_dataset(
             prepared_df,
-            filename=features_file.filename
+            filename=features_file.filename,
+            target_column=target_column
         )
 
         return {
@@ -300,42 +345,32 @@ async def ingest_dataset(
 async def preprocess_dataset(
     dataset_id: str,
     n_components: int = 4,
-    variance_threshold: float = 0.0
+    variance_threshold: float = 0.0,
+    target_column: str | None = None
 ):
     try:
-        # 1. Load stored dataset
+        # 1. Load stored dataset and metadata
         df = load_dataset(dataset_id)
+        try:
+            metadata = load_dataset_metadata(dataset_id)
+        except Exception:
+            metadata = {}
 
-        # 2. Identify target column
-        target_column = "Diagnosis"
+        if not target_column:
+            target_column = metadata.get("target_column")
 
-        if target_column not in df.columns:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Target column '{target_column}' was not found."
-            )
+        # 2. Extract features and encoded binary target
+        X, y, resolved_target_column = extract_and_encode_target(
+            df, target_column
+        )
 
-        # 3. Separate features and target
-        X = df.drop(columns=[target_column])
-
-        y = df[target_column].map({
-            "B": 0,
-            "M": 1
-        })
-
-        if y.isnull().any():
-            raise HTTPException(
-                status_code=400,
-                detail="Target contains unsupported or missing values."
-            )
-
-        # 4. Create preprocessing pipeline
+        # 3. Create preprocessing pipeline
         pipeline = PreprocessingPipeline(
             n_components=n_components,
             variance_threshold=variance_threshold
         )
 
-        # 5. Preprocess
+        # 4. Preprocess
         result = pipeline.fit_transform(X, y)
 
         # 6. Return metadata

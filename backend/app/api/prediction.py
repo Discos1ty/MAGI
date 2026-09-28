@@ -201,3 +201,52 @@ def predict(payload: PatientFeatures):
             "raw_score": round(quantum_score, 4),
         },
     }
+
+
+@router.get("/shap")
+def get_shap_explanation(sample_type: str = "malignant"):
+    try:
+        import shap
+        data = load_breast_cancer()
+        X, y = data.data, np.where(data.target == 0, 1, 0)
+        
+        # Fit TreeExplainer on XGBoost
+        model = xgb.XGBClassifier(n_estimators=100, max_depth=3, eval_metric="logloss", random_state=42)
+        model.fit(X, y)
+        explainer = shap.TreeExplainer(model)
+
+        # Select target sample based on requested diagnosis type
+        if sample_type == "benign":
+            target_indices = np.where(y == 0)[0]
+        else:
+            target_indices = np.where(y == 1)[0]
+            
+        sample_idx = int(target_indices[0])
+        shap_vals = explainer.shap_values(X[sample_idx:sample_idx+1])[0]
+        base_val = float(explainer.expected_value)
+        prob = float(model.predict_proba(X[sample_idx:sample_idx+1])[0][1])
+
+        features_list = []
+        for i, name in enumerate(data.feature_names):
+            features_list.append({
+                "feature": str(name),
+                "value": round(float(X[sample_idx][i]), 4),
+                "shap_value": round(float(shap_vals[i]), 4),
+                "contribution": round(float(shap_vals[i]), 4),
+            })
+
+        # Sort by absolute impact
+        features_list.sort(key=lambda item: abs(item["shap_value"]), reverse=True)
+
+        return {
+            "status": "success",
+            "condition": "Wisconsin Breast Cancer (WDBC)",
+            "sample_type": "Malignant" if sample_type == "malignant" else "Benign",
+            "base_value": round(base_val, 4),
+            "predicted_risk_probability": round(prob, 4),
+            "risk_level": "High Risk" if prob >= 0.7 else "Moderate Risk" if prob >= 0.3 else "Low Risk",
+            "top_features": features_list[:7],
+            "all_features": features_list,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP explanation failed: {str(e)}")

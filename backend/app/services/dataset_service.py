@@ -86,3 +86,48 @@ def process_dataset(
 
         "validation": validation
     }
+
+
+def extract_and_encode_target(df: pd.DataFrame, target_column: str | None = None):
+    """
+    Robustly extracts features X and binary target y (0/1) from df.
+    Works with integer (0/1), string ('B'/'M', 'benign'/'malignant'),
+    or explicit target column name.
+    """
+    if target_column and target_column in df.columns:
+        col = target_column
+    elif "target" in df.columns:
+        col = "target"
+    elif "Diagnosis" in df.columns:
+        col = "Diagnosis"
+    elif "diagnosis" in df.columns:
+        col = "diagnosis"
+    else:
+        col = df.columns[-1]
+
+    y_raw = df[col]
+    X = df.drop(columns=[col])
+
+    id_cols = [c for c in X.columns if c.lower() in ["id", "patient_id", "sample_id", "case_id"]]
+    if id_cols:
+        X = X.drop(columns=id_cols)
+
+    unique_vals = y_raw.dropna().unique()
+    if set(unique_vals).issubset({0, 1}):
+        y = y_raw.astype(int)
+    else:
+        str_map = {}
+        for val in unique_vals:
+            str_val = str(val).strip().upper()
+            if str_val in ["0", "B", "BENIGN", "NEGATIVE", "HEALTHY", "NORMAL", "FALSE"]:
+                str_map[val] = 0
+            elif str_val in ["1", "M", "MALIGNANT", "POSITIVE", "SICK", "DISEASED", "TRUE"]:
+                str_map[val] = 1
+
+        if len(str_map) < len(unique_vals):
+            sorted_vals = sorted(unique_vals, key=lambda v: str(v))
+            str_map = {val: idx for idx, val in enumerate(sorted_vals[:2])}
+
+        y = y_raw.map(str_map).fillna(0).astype(int)
+
+    return X, y, col
