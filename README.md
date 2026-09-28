@@ -1,2 +1,2 @@
-# Team-NERV
+# MAGI
 Nah, I'd win.
