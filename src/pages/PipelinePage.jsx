@@ -330,10 +330,10 @@ export default function PipelinePage({
               </span>
             </div>
             <h1 className="font-serif text-3xl sm:text-4xl text-[#14211F] tracking-tight">
-              QuantumDx Intelligence Pipeline
+              MAGI Intelligence Pipeline
             </h1>
             <p className="text-sm text-[#5B6664] mt-1 max-w-2xl">
-              QuantumDx is processing your dataset, performing quantum-ready dimensionality reduction, and executing synchronized Classical & Quantum models.
+              MAGI is processing your dataset, performing quantum-ready dimensionality reduction, and executing synchronized Classical & Quantum models.
             </p>
           </div>
 
@@ -1082,7 +1082,7 @@ export default function PipelinePage({
                   EXPERIMENT REPORT · SUMMARY
                 </span>
                 <h3 className="font-serif text-2xl sm:text-3xl text-[#14211F] mt-1">
-                  QuantumDx Clinical Diagnostic Report
+                  MAGI Clinical Diagnostic Report
                 </h3>
                 <p className="text-xs text-[#5B6664]">
                   Dataset: {datasetMeta?.filename || 'breast_cancer_dataset_full.csv'} · 569 Samples

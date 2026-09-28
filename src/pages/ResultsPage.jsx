@@ -90,7 +90,7 @@ export default function ResultsPage({
   // Handle Export / Download Experiment JSON
   const handleExportJSON = () => {
     const experimentPayload = {
-      experiment_id: 'QDX-EXP-' + Date.now().toString(36).toUpperCase(),
+      experiment_id: 'MAGI-EXP-' + Date.now().toString(36).toUpperCase(),
       date: new Date().toISOString(),
       dataset: {
         name: dataset?.filename || dataset?.name || 'breast_cancer_dataset_full.csv',
@@ -129,7 +129,7 @@ export default function ResultsPage({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `QuantumDx_Experiment_Report_${selectedSampleType}.json`;
+    a.download = `MAGI_Experiment_Report_${selectedSampleType}.json`;
     a.click();
     URL.revokeObjectURL(url);
 
@@ -149,9 +149,6 @@ export default function ResultsPage({
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[11px] font-mono tracking-wider uppercase font-semibold text-[#0F766E] px-2 py-0.5 rounded bg-[#0F766E]/10">
                 EXPERIMENT RESULTS & CLINICAL INSIGHT
-              </span>
-              <span className="text-[11px] text-[#717E7B] font-mono">
-                SIH26139 · Diagnostic Analytical Deck
               </span>
             </div>
             <h1 className="font-serif text-3xl sm:text-4xl text-[#14211F] tracking-tight">
@@ -867,46 +864,6 @@ export default function ResultsPage({
                 <span className="flex items-center gap-1 text-[#0F766E]">● Benign Cluster</span>
                 <span className="flex items-center gap-1 text-rose-600">● Malignant Cluster</span>
               </div>
-            </div>
-          </div>
-        </section>
-
-        {/* =========================================================================
-            7. 🔄 EXPERIMENT CONFIGURATION & REPRODUCIBILITY
-           ========================================================================= */}
-        <section className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="pb-4 border-b border-[#E7E5E0]">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
-              7. AUDIT LEDGER & REPRODUCIBILITY
-            </span>
-            <h3 className="font-serif text-2xl text-[#14211F] mt-1">
-              Technical Experiment Parameters
-            </h3>
-            <p className="text-xs text-[#5B6664] mt-0.5">
-              Deterministic hyperparameters and dataset splits to guarantee clinical reproducibility.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-            <div className="p-3.5 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[10px]">Dataset Baseline</span>
-              <div className="font-semibold text-[#14211F] mt-1">WDBC 569 Rows</div>
-              <span className="text-[10px] text-[#5B6664]">30 Clinical Biomarkers</span>
-            </div>
-            <div className="p-3.5 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[10px]">Train / Test Split</span>
-              <div className="font-semibold text-[#14211F] mt-1">80% / 20% Stratified</div>
-              <span className="text-[10px] text-[#5B6664]">Random State: 42</span>
-            </div>
-            <div className="p-3.5 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[10px]">Quantum Circuit</span>
-              <div className="font-semibold text-[#14211F] mt-1">4-Qubit Wires</div>
-              <span className="text-[10px] text-[#5B6664]">Adam Stepsize 0.08</span>
-            </div>
-            <div className="p-3.5 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[10px]">Quantum Device</span>
-              <div className="font-semibold text-[#0F766E] mt-1">default.qubit</div>
-              <span className="text-[10px] text-[#5B6664]">Ideal Statevector</span>
             </div>
           </div>
         </section>

@@ -110,7 +110,7 @@ export default function HomePage({ onTryDemo }) {
 
 
         {/* =========================================================================
-            2. WELCOME TO QUANTUMDX
+            2. WELCOME TO MAGI
            ========================================================================= */}
         <section id="welcome-overview" className="mt-28 pt-12 border-t border-[#E7E5E0]">
           <div className="clinical-card bg-white p-8 sm:p-10 rounded-[16px] border border-[#E7E5E0]">
@@ -118,13 +118,13 @@ export default function HomePage({ onTryDemo }) {
               <div className="max-w-3xl">
                 <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 rounded-full text-xs font-semibold uppercase tracking-wider bg-[#0F766E]/10 text-[#0F766E] border border-[#0F766E]/20">
                   <Activity className="w-3.5 h-3.5" />
-                  <span>Welcome to QuantumDx</span>
+                  <span>Welcome to MAGI</span>
                 </div>
                 <h2 className="font-serif text-3xl sm:text-[34px] text-[#14211F] font-normal leading-tight mb-4">
                   A Unified Machine Learning Environment for Early Disease Detection
                 </h2>
                 <p className="text-base sm:text-[17px] text-[#5B6664] leading-[1.75]">
-                  QuantumDx is a hybrid Quantum–Classical Machine Learning platform for early disease detection. It processes biomedical datasets, applies standardized preprocessing and feature reduction, and evaluates classical and quantum-enhanced models to generate interpretable, reproducible predictions.
+                  MAGI is a hybrid Quantum–Classical Machine Learning platform for early disease detection. It processes biomedical datasets, applies standardized preprocessing and feature reduction, and evaluates classical and quantum-enhanced models to generate interpretable, reproducible predictions.
                 </p>
               </div>
 
@@ -152,7 +152,7 @@ export default function HomePage({ onTryDemo }) {
 
 
         {/* =========================================================================
-            3. HOW QUANTUMDX WORKS (5–6 STEP HORIZONTAL CARD PIPELINE)
+            3. HOW MAGI WORKS (5–6 STEP HORIZONTAL CARD PIPELINE)
            ========================================================================= */}
         <section id="how-it-works" className="mt-28 pt-12 border-t border-[#E7E5E0]">
           <div className="max-w-2xl mb-10">
@@ -160,7 +160,7 @@ export default function HomePage({ onTryDemo }) {
               End-to-End Workflow
             </div>
             <h2 className="font-serif text-3xl sm:text-4xl text-[#14211F] font-normal leading-tight">
-              How QuantumDx Works
+              How MAGI Works
             </h2>
             <p className="mt-3 text-base text-[#5B6664]">
               A progressive 6-stage clinical pipeline directly reflecting the technical approach: preprocessing, feature reduction, classical & quantum training, benchmarking, and explainability.
@@ -671,15 +671,15 @@ export default function HomePage({ onTryDemo }) {
 
 
         {/* =========================================================================
-            5. WHY QUANTUMDX? (4 CARDS)
+            5. WHY MAGI? (4 CARDS)
            ========================================================================= */}
-        <section id="why-quantumdx" className="mt-28 pt-12 border-t border-[#E7E5E0]">
+        <section id="why-magi" className="mt-28 pt-12 border-t border-[#E7E5E0]">
           <div className="max-w-2xl mb-12">
             <div className="text-xs font-semibold tracking-wider uppercase text-[#0F766E] mb-2">
               Value & Innovation
             </div>
             <h2 className="font-serif text-3xl sm:text-4xl text-[#14211F] font-normal leading-tight">
-              Why QuantumDx?
+              Why MAGI?
             </h2>
             <p className="mt-3 text-base text-[#5B6664]">
               Understanding why this platform is useful, not just how it works — built to bring empirical honesty, hybrid synergy, and interpretability to medical AI.

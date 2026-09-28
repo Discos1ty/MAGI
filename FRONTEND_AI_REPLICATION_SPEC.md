@@ -1,5 +1,5 @@
 # Frontend Replication Master Blueprint & System Specification
-## Project: SIH26139 — Hybrid Quantum-Classical Clinical Research Platform (QuantumDx)
+## Project: SIH26139 — Hybrid Quantum-Classical Clinical Research Platform (MAGI)
 
 > **Purpose of this Document**: This document is an exhaustive, self-contained specification designed to be handed to an AI coding assistant or engineering team to build the exact identical frontend application from scratch. Every design token, typography setting, component specification, animation detail, context architecture, API integration contract, and interaction behavior is documented with zero omissions.
 
@@ -7,7 +7,7 @@
 
 ## 1. Executive Summary & Tech Stack
 
-The application, **QuantumDx (SIH26139)**, is a clinical editorial web application designed for biomedical research, empirical quantum machine learning benchmarking (Classical XGBoost vs. 4-Qubit Variational Quantum Classifier vs. Quantum-Classical Hybrid Ensembles), dataset profiling, and patient case inference.
+The application, **MAGI (SIH26139)**, is a clinical editorial web application designed for biomedical research, empirical quantum machine learning benchmarking (Classical XGBoost vs. 4-Qubit Variational Quantum Classifier vs. Quantum-Classical Hybrid Ensembles), dataset profiling, and patient case inference.
 
 ### Core Technology Stack
 
@@ -337,12 +337,12 @@ The application uses **React Context API** with three dedicated contexts:
 - **UI Integration**: Displays the active case pill on desktop & mobile navbar (`Case #40f003e3 · Pipeline`) with a quick-navigate and close button.
 
 ### 4.2 `ThemeContext.jsx` (Theme Management)
-- **State**: `theme: 'light' | 'dark'` (Default: checks `localStorage.getItem('quantumdx_theme')` or `prefers-color-scheme`).
+- **State**: `theme: 'light' | 'dark'` (Default: checks `localStorage.getItem('magi_theme')` or `prefers-color-scheme`).
 - **Methods**: `setTheme(theme)`, `toggleTheme()`.
 - **Effect**: Appends or removes `dark`/`light` class on `document.documentElement`.
 
 ### 4.3 `ResearchContext.jsx` (Core Experiment Orchestrator)
-- **Session Storage Key**: `quantumdx_research_session_v1`.
+- **Session Storage Key**: `magi_research_session_v1`.
 - **State Fields**:
   - `isBackendOnline`: `boolean` (checked via `apiClient.checkHealth()`).
   - `datasetId`, `datasetInfo`, `profile`, `validation`, `preprocessing`.
@@ -475,9 +475,9 @@ All incoming API payloads MUST be transformed through normalizers to ensure resi
 
 #### `Footer.jsx`
 - Clean editorial 3-line footer with `#E7E5E0` top border:
-  1. `Developed by Team QuantumDx` (font-medium `#14211F`)
+  1. `Developed by Team MAGI` (font-medium `#14211F`)
   2. `SIH26139: Hybrid Quantum-Classical Model for Early Disease Detection`
-  3. `Inquiries & Research Audit: research@sih26139-quantumdx.gov.in`
+  3. `Inquiries & Research Audit: research@sih26139-magi.gov.in`
 
 #### `AmbientBackground.jsx`
 - `fixed inset-0 pointer-events-none z-0 bg-[#FAFAF7]`. Zero glow, zero neon artifacts.

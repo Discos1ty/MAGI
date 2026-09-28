@@ -29,10 +29,7 @@ export default function Navbar({ activePage = 'home', onNavigate, hasResults = f
           </div>
           <div className="flex flex-col">
             <span className="font-serif text-xl tracking-tight text-[#14211F] leading-tight">
-              QuantumDx
-            </span>
-            <span className="text-[10px] tracking-wider uppercase font-medium text-[#5B6664]">
-              SIH26139 · Clinical Research
+              MAGI
             </span>
           </div>
         </button>
@@ -95,13 +92,6 @@ export default function Navbar({ activePage = 'home', onNavigate, hasResults = f
           </button>
         </nav>
 
-        {/* Right Status Badge */}
-        <div className="hidden sm:flex items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#FFFFFF] border border-[#E7E5E0] text-[#5B6664]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#0F766E] animate-pulse" />
-            <span>Hybrid Architecture Active</span>
-          </div>
-        </div>
       </div>
     </header>
   );

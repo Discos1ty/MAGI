@@ -336,7 +336,7 @@ export default function UploadPage({ onContinueToPreprocessing }) {
           </h1>
 
           <p className="mt-3 text-base sm:text-[17px] text-[#5B6664] max-w-2xl leading-relaxed">
-            Upload a biomedical dataset in CSV format to begin the QuantumDx analysis pipeline.
+            Upload a biomedical dataset in CSV format to begin the MAGI analysis pipeline.
           </p>
 
           <p className="mt-1 text-xs sm:text-[13px] text-[#717E7B] max-w-2xl">
