@@ -20,12 +20,12 @@ MAGI does not aim to discard classical machine learning; instead, it establishes
 
 MAGI operates via a hybrid classical-quantum pipeline:
 [ Patient Data (CSV / Tabular) ]
-        │
-        ▼
+│
+▼
 [ Classical Preprocessing ]
 • Imputation & Variance Thresholding
-• Standard Scaling & PCA Dimensionality Reduction
-        │
+• Standard Scaling & PCA Dimensionality Reductio
+│
 ┌───────┴────────────────────────┐
 ▼                                ▼
 [ Classical Benchmark ]        [ Quantum Pipeline ]
@@ -34,12 +34,12 @@ MAGI operates via a hybrid classical-quantum pipeline:
 │                        • Variational Quantum Circuit (PennyLane)
 │                        • Classical Gradient-Based Optimization
 └───────┬────────────────────────┘
-        ▼
+▼
 [ Explainability & XAI ]
 • SHAP / Attribution Heatmaps
 • Feature Discrepancy Analysis
-        │
-        ▼
+│
+▼
 [ Clinical Dashboard UI ]
 • Comparative Benchmarking
 • Risk Stratification & Confidence Scoring
