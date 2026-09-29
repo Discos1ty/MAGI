@@ -1,5 +1,3 @@
-cd /Users/divyanshuchaturvedi/Team-NERV
-cat > .gitignore << 'EOF'
 node_modules/
 dist/
 __pycache__/
@@ -10,5 +8,5 @@ venv/
 .venv/
 data/uploads/
 data/metadata/
-EOF.vite/
+.vite/
 backend/model_cache/

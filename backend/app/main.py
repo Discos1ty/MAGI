@@ -1,7 +1,11 @@
 # Destination: backend/app/main.py (replaces your current file)
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.dataset import router as dataset_router
 
@@ -43,7 +47,32 @@ except ImportError as e:
         "(see requirements.txt) to enable POST /api/predict/."
     )
 
+# React production build
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = PROJECT_ROOT / "dist"
+
+if FRONTEND_DIST.exists():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=FRONTEND_DIST / "assets"),
+        name="assets",
+    )
 
 @app.get("/")
 async def root():
+    if FRONTEND_DIST.exists():
+        return FileResponse(FRONTEND_DIST / "index.html")
+
     return {"status": "ok", "service": "Team-NERV API"}
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    requested_file = FRONTEND_DIST / full_path
+
+    if requested_file.is_file():
+        return FileResponse(requested_file)
+
+    if FRONTEND_DIST.exists():
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+    return {"detail": "Not Found"}
