@@ -8,7 +8,7 @@
 
 ---
 
-## 📌 Executive Summary
+## Executive Summary
 
 Early clinical diagnosis is often hampered by high-dimensional, noisy biomedical data where complex, non-linear feature interactions evade classical detection methods. **Project MAGI** is a clinical-grade **Hybrid Quantum Machine Learning (HQML)** diagnostic platform designed to detect life-threatening pathologies at their earliest onset.
 
@@ -16,7 +16,7 @@ MAGI does not aim to discard classical machine learning; instead, it establishes
 
 ---
 
-## 🔬 Core System Architecture & Pipeline
+## Core System Architecture & Pipeline
 
 ```mermaid
 flowchart TD
@@ -56,7 +56,7 @@ flowchart TD
 
 ---
 
-## 📊 Current Milestone: Breast Cancer Detection
+## Current Milestone: Breast Cancer Detection
 
 MAGI currently validates its hybrid pipeline against the **UCI Wisconsin Breast Cancer Database**:
 * **Dataset Characteristics:** 30 continuous real-world pathological features derived from digitized Fine Needle Aspirate (FNA) images of breast masses.
@@ -65,7 +65,7 @@ MAGI currently validates its hybrid pipeline against the **UCI Wisconsin Breast 
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 | Layer | Technologies |
 | :--- | :--- |
@@ -77,7 +77,7 @@ MAGI currently validates its hybrid pipeline against the **UCI Wisconsin Breast 
 
 ---
 
-## 🚀 Future Roadmap & Expansion
+## Future Roadmap & Expansion
 
 Phase 1 (Current)       Phase 2                         Phase 3
 [Breast Cancer HQML] ──► [Multi-Disease Expansion] ──► [National Infrastructure]
