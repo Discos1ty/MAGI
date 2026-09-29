@@ -18,18 +18,19 @@ MAGI does not aim to discard classical machine learning; instead, it establishes
 
 ## 🔬 Core System Architecture & Pipeline
 
+```mermaid
 flowchart TD
-    A[Patient Data <br/><i>CSV / Tabular</i>] --> B[Classical Preprocessing <br/><i>Imputation, Scaling, PCA</i>]
+    A["Patient Data<br>(CSV / Tabular)"] --> B["Classical Preprocessing<br>(Imputation, Scaling, PCA)"]
     
-    B --> C[Classical Benchmark <br/><i>XGBoost & Random Forest</i>]
-    B --> D[Quantum Pipeline <br/><i>Angle Encoding & CNOT Ansatz</i>]
+    B --> C["Classical Benchmark<br>(XGBoost & Random Forest)"]
+    B --> D["Quantum Pipeline<br>(Angle Encoding & CNOT Ansatz)"]
     
-    D --> D1[VQC via PennyLane <br/><i>Classical Optimization Loop</i>]
+    D --> D1["VQC via PennyLane<br>(Classical Optimization Loop)"]
     
-    C --> E[Explainability & XAI <br/><i>SHAP & Discrepancy Analysis</i>]
+    C --> E["Explainability & XAI<br>(SHAP & Discrepancy Analysis)"]
     D1 --> E
     
-    E --> F[Clinical Dashboard UI <br/><i>Benchmarking & Risk Stratification</i>]
+    E --> F["Clinical Dashboard UI<br>(Benchmarking & Risk Stratification)"]
 
     style A fill:#f9f9f9,stroke:#333,stroke-width:1px
     style B fill:#e1f5fe,stroke:#0288d1,stroke-width:1px
@@ -38,7 +39,7 @@ flowchart TD
     style D1 fill:#ede7f6,stroke:#512da8,stroke-width:1px
     style E fill:#fffde7,stroke:#fbc02d,stroke-width:1px
     style F fill:#fce4ec,stroke:#c2185b,stroke-width:1px
-
+```
 
 ### 1. Data Ingestion & Classical Preprocessing
 * Input features undergo automated normalization and variance thresholding.
