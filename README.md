@@ -32,13 +32,13 @@ flowchart TD
     
     E --> F["Clinical Dashboard UI<br>(Benchmarking & Risk Stratification)"]
 
-    style A fill:#f9f9f9,stroke:#333,stroke-width:1px
-    style B fill:#e1f5fe,stroke:#0288d1,stroke-width:1px
-    style C fill:#e8f5e9,stroke:#388e3c,stroke-width:1px
-    style D fill:#ede7f6,stroke:#512da8,stroke-width:1px
-    style D1 fill:#ede7f6,stroke:#512da8,stroke-width:1px
-    style E fill:#fffde7,stroke:#fbc02d,stroke-width:1px
-    style F fill:#fce4ec,stroke:#c2185b,stroke-width:1px
+    style A fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#000000
+    style B fill:#e1f5fe,stroke:#0288d1,stroke-width:1px,color:#000000
+    style C fill:#e8f5e9,stroke:#388e3c,stroke-width:1px,color:#000000
+    style D fill:#ede7f6,stroke:#512da8,stroke-width:1px,color:#000000
+    style D1 fill:#ede7f6,stroke:#512da8,stroke-width:1px,color:#000000
+    style E fill:#fffde7,stroke:#fbc02d,stroke-width:1px,color:#000000
+    style F fill:#fce4ec,stroke:#c2185b,stroke-width:1px,color:#000000
 ```
 
 ### 1. Data Ingestion & Classical Preprocessing
