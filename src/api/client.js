@@ -22,7 +22,7 @@ async function request(endpoint, options = {}) {
 }
 
 export async function checkBackendHealth() {
-  return await request('/');
+  return await request('/api/predict/health');
 }
 
 export async function getSampleWDBC() {
