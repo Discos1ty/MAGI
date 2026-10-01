@@ -1,4 +1,8 @@
+import logging
+import traceback
 from fastapi import APIRouter, HTTPException, Depends
+
+logger = logging.getLogger(__name__)
 
 from app.services.dataset_store import load_dataset, load_dataset_metadata
 from app.services.dataset_service import extract_and_encode_target
@@ -155,6 +159,8 @@ def run_training(
         )
 
     except Exception as e:
+        traceback.print_exc()
+        logger.exception(f"Training failed: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Training failed: {str(e)}"
