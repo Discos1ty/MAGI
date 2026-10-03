@@ -13,9 +13,13 @@ from app.services.dataset_store import (
     list_datasets,
     load_dataset,
     load_dataset_metadata,
-    PROJECT_ROOT
+    PROJECT_ROOT,
+    UPLOAD_DIR
 )
-from app.services.dataset_service import extract_and_encode_target
+from app.services.dataset_service import (
+    extract_and_encode_target,
+    resolve_malignant_class
+)
 from app.services.preprocessing_service import PreprocessingPipeline
 
 
@@ -42,20 +46,47 @@ async def load_sample_wdbc():
             detail="Sample dataset not found at data/raw/breast_cancer_dataset_full.csv"
         )
 
-    df = pd.read_csv(raw_path)
+    return _save_wdbc_sample(pd.read_csv(raw_path), "breast_cancer_dataset_full.csv")
+
+
+# Cached response for the scikit-learn WDBC copy, reused so repeat benchmark runs don't pile up uploads
+_sklearn_wdbc_response = None
+
+
+@router.post("/sample/sklearn-wdbc")
+async def load_sklearn_wdbc():
+    global _sklearn_wdbc_response
+
+    # Reuse the saved copy only while its CSV is still on disk (uploads may be cleared while the server runs)
+    if _sklearn_wdbc_response is not None:
+        if (UPLOAD_DIR / f"{_sklearn_wdbc_response['dataset_id']}.csv").exists():
+            return _sklearn_wdbc_response
+        _sklearn_wdbc_response = None
+
+    from sklearn.datasets import load_breast_cancer
+
+    # as_frame gives the 30 named biomarkers plus a "target" column
+    df = load_breast_cancer(as_frame=True).frame
+    _sklearn_wdbc_response = _save_wdbc_sample(df, "sklearn.datasets.load_breast_cancer")
+    return _sklearn_wdbc_response
+
+
+def _save_wdbc_sample(df: pd.DataFrame, filename: str) -> dict:
     target_column = "target"
     validation = validate_dataset(df, target_column)
 
     dataset_id = save_dataset(
         df,
-        filename="breast_cancer_dataset_full.csv",
-        target_column=target_column
+        filename=filename,
+        target_column=target_column,
+        # scikit-learn's WDBC encoding: 0 = malignant, 1 = benign
+        extra_metadata={"malignant_value": 0}
     )
 
     return {
         "status": "success",
         "dataset_id": dataset_id,
-        "filename": "breast_cancer_dataset_full.csv",
+        "filename": filename,
         "dataset": {
             "rows": int(df.shape[0]),
             "columns": int(df.shape[1]),
@@ -409,4 +440,78 @@ async def preprocess_dataset(
         raise HTTPException(
             status_code=500,
             detail=f"Preprocessing failed: {str(e)}"
+        )
+
+
+# PCA Projection
+
+@router.get("/pca-projection")
+async def pca_projection(
+    dataset_id: str,
+    target_column: str | None = None
+):
+    try:
+        df = load_dataset(dataset_id)
+        try:
+            metadata = load_dataset_metadata(dataset_id)
+        except FileNotFoundError:
+            metadata = {}
+
+        if not target_column:
+            target_column = metadata.get("target_column")
+
+        X, y, resolved_target_column = extract_and_encode_target(
+            df, target_column
+        )
+        malignant_class = resolve_malignant_class(
+            df[resolved_target_column], metadata
+        )
+
+        # Same fit as the training pipeline, then project every patient
+        pipeline = PreprocessingPipeline()
+        result = pipeline.fit_transform(X, y)
+
+        projected = pipeline.pca.transform(
+            pipeline.scaler.transform(
+                pipeline.feature_selector.transform(X)
+            )
+        )
+        test_rows = set(result["y_test"].index)
+
+        points = [
+            {
+                "pc1": round(float(row[0]), 4),
+                "pc2": round(float(row[1]), 4),
+                "label": "malignant" if label == malignant_class else "benign",
+                "split": "test" if index in test_rows else "train",
+            }
+            for index, row, label in zip(X.index, projected, y)
+        ]
+
+        return {
+            "status": "success",
+            "dataset_id": dataset_id,
+            "target_column": resolved_target_column,
+            "components": pipeline.component_labels(),
+            "explained_variance_ratio": result["metadata"]["explained_variance_ratio"],
+            "total_explained_variance": result["metadata"]["total_explained_variance"],
+            "points": points
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dataset '{dataset_id}' was not found."
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PCA projection failed: {str(e)}"
         )

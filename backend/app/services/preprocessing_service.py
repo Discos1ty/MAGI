@@ -56,6 +56,14 @@ class PreprocessingPipeline:
         }
 
 
+    def component_labels(self) -> list[str]:
+        # Name each principal component after the biomarker with the largest loading
+        names = self.feature_selector.get_feature_names_out()
+        return [
+            f"PC{i + 1} · {names[int(np.argmax(np.abs(component)))]}"
+            for i, component in enumerate(self.pca.components_)
+        ]
+
     def save(self, file_path):
         joblib.dump(self, file_path)
 

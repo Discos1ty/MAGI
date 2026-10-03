@@ -8,69 +8,83 @@ import ResultsPage from './pages/ResultsPage.jsx';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState('home');
-  const [activeDataset, setActiveDataset] = useState(null);
-  const [pipelineResults, setPipelineResults] = useState(null);
+  // Dataset for the Benchmarks page: the upload when continuing from Upload, otherwise null so
+  // the page benchmarks scikit-learn's built-in Wisconsin (WDBC) dataset
+  const [benchmarkDataset, setBenchmarkDataset] = useState(null);
+  // SHAP explanations for uploaded patients, plus which patient to show first
+  const [patientTest, setPatientTest] = useState(null);
 
   const navigateTo = (page) => {
+    if (page === 'pipeline') setBenchmarkDataset(null);
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleContinueToPreprocessing = (dataset, target) => {
-    setActiveDataset({ ...dataset, targetColumn: target });
+    setBenchmarkDataset({ ...dataset, targetColumn: target });
     setCurrentPage('pipeline');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleViewResults = (results) => {
-    setPipelineResults(results);
+  const handleViewPatientShap = (explanation, patient) => {
+    setPatientTest({ ...explanation, selectedPatient: patient });
     setCurrentPage('results');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAFAF7] text-[#14211F]">
-      {/* Sticky Top Navigation — Home, Upload Dataset, Pipeline, Results */}
+      {/* Ambient green aurora behind the page content */}
+      <div className="ambient-background" aria-hidden="true">
+        <div className="aurora-blob aurora-blob-1" />
+        <div className="aurora-blob aurora-blob-2" />
+        <div className="aurora-blob aurora-blob-3" />
+      </div>
+
+      {/* Left Sidebar Navigation — Home, Upload Patient Data, Benchmarks, Analytics, Results */}
       <Navbar 
         activePage={currentPage} 
         onNavigate={navigateTo}
-        hasResults={Boolean(pipelineResults)}
+        hasResults={Boolean(patientTest)}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1">
-        {currentPage === 'home' && (
-          <HomePage 
-            onTryDemo={() => navigateTo('upload')} 
-          />
-        )}
+      {/* Content column, offset by the sidebar width on desktop */}
+      <div className="flex-1 flex flex-col md:pl-60">
+        {/* Main Content Area */}
+        <main className="relative z-10 flex-1">
+          {currentPage === 'home' && (
+            <HomePage 
+              onTryDemo={() => navigateTo('upload')} 
+            />
+          )}
 
-        {currentPage === 'upload' && (
-          <UploadPage 
-            onContinueToPreprocessing={handleContinueToPreprocessing} 
-          />
-        )}
+          {currentPage === 'upload' && (
+            <UploadPage 
+              onContinueToPreprocessing={handleContinueToPreprocessing} 
+              onViewPatientShap={handleViewPatientShap}
+            />
+          )}
 
-        {currentPage === 'pipeline' && (
-          <PipelinePage 
-            dataset={activeDataset}
-            onNavigateToUpload={() => navigateTo('upload')}
-            onViewResults={handleViewResults}
-          />
-        )}
+          {currentPage === 'pipeline' && (
+            <PipelinePage 
+              key={benchmarkDataset?.id || 'sklearn-wdbc'}
+              dataset={benchmarkDataset}
+              onNavigateToUpload={() => navigateTo('upload')}
+            />
+          )}
 
-        {currentPage === 'results' && (
-          <ResultsPage
-            dataset={activeDataset || pipelineResults?.datasetMeta}
-            pipelineData={pipelineResults}
-            onNavigateToUpload={() => navigateTo('upload')}
-            onNavigateToPipeline={() => navigateTo('pipeline')}
-          />
-        )}
-      </main>
+          {currentPage === 'results' && (
+            <ResultsPage
+              patientTest={patientTest}
+              onNavigateToUpload={() => navigateTo('upload')}
+              onNavigateToPipeline={() => navigateTo('pipeline')}
+            />
+          )}
+        </main>
 
-      {/* Scholarly Footer */}
-      <Footer />
+        {/* Scholarly Footer */}
+        <Footer />
+      </div>
     </div>
   );
 }

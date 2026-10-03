@@ -1,11 +1,14 @@
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import List
 
 import joblib
 import numpy as np
 import pennylane as qml
+import shap
 import xgboost as xgb
 from fastapi import APIRouter, HTTPException
 from pennylane import numpy as pnp
@@ -15,6 +18,13 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score, recall_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
+
+from app.services.explainability_service import (
+    evaluate_model,
+    explain_patient,
+    fuse_risk,
+    render_uploaded_patient_plots,
+)
 
 router = APIRouter(prefix="/api/predict", tags=["Prediction"])
 
@@ -34,6 +44,14 @@ N_QUBITS = 4
 NUM_LAYERS = 3
 EPOCHS = 8
 BATCH_SIZE = 16
+
+SHAP_BACKGROUND_CLUSTERS = 10
+SHAP_GLOBAL_SAMPLES = 60
+MAX_PATIENTS = 200
+
+# KernelExplainer keeps per-call state on the instance, so concurrent requests
+# sharing one explainer corrupt each other; run SHAP one request at a time
+_shap_lock = threading.Lock()
 
 FEATURE_NAMES = load_breast_cancer().feature_names.tolist()
 
@@ -55,6 +73,13 @@ class ModelBundle:
         self.scaler: MinMaxScaler | None = None
         self.vqc_weights = None
         self.metrics = {}
+        self.benchmark = {}
+        self.x_train_scaled = None
+        self.x_test_scaled = None
+        self._global_quantum_shap = None
+        self.component_labels: list[str] = []
+        self._explainers = None
+        self._explainer_lock = threading.Lock()
         self._ready = False
 
     def train_or_load(self):
@@ -84,6 +109,13 @@ class ModelBundle:
         x_test_pca = self.pca.transform(x_test_raw)
         x_train_scaled = self.scaler.transform(x_train_pca)
         x_test_scaled = self.scaler.transform(x_test_pca)
+        self.x_train_scaled = x_train_scaled
+        self.x_test_scaled = x_test_scaled
+        # Name each qubit's principal component after its heaviest-loading biomarker
+        self.component_labels = [
+            f"PC{i + 1} · {FEATURE_NAMES[int(np.argmax(np.abs(component)))]}"
+            for i, component in enumerate(self.pca.components_)
+        ]
 
         if os.path.exists(XGB_MODEL_PATH):
             self.xgb_model = xgb.XGBClassifier()
@@ -141,6 +173,17 @@ class ModelBundle:
                 "roc_auc": round(float(roc_auc_score(y_test_q, q_raw_scores)), 3),
             },
         }
+        # Same test split, scored the way /explain scores patients (malignant = 1)
+        t0 = time.time()
+        xgb_test_probs = self.classical_probabilities(x_test_scaled)
+        xgb_time = time.time() - t0
+        t0 = time.time()
+        vqc_test_scores = self.quantum_scores(x_test_scaled)
+        vqc_time = time.time() - t0
+        self.benchmark = {
+            "classical": evaluate_model(y_test, xgb_test_probs, 0.5, xgb_time),
+            "quantum": evaluate_model(y_test, vqc_test_scores, 0.0, vqc_time),
+        }
         self._ready = True
 
     def predict_classical(self, features_scaled: np.ndarray):
@@ -153,12 +196,77 @@ class ModelBundle:
         pred = 1 if score > 0 else 0
         return pred, score
 
+    def quantum_scores(self, rows: np.ndarray) -> np.ndarray:
+        # Broadcast all rows through the circuit at once; > 0 means malignant
+        features = np.atleast_2d(np.asarray(rows, dtype=float)).T
+        return np.atleast_1d(np.asarray(vqc_circuit(self.vqc_weights, features), dtype=float))
+
+    def classical_probabilities(self, rows: np.ndarray) -> np.ndarray:
+        return self.xgb_model.predict_proba(np.atleast_2d(rows))[:, 1]
+
+    def explainers(self):
+        # Built once from the cached models, so uploaded patients can be
+        # explained without running the training pipeline
+        with self._explainer_lock:
+            if self._explainers is None:
+                background = shap.kmeans(
+                    self.x_train_scaled,
+                    min(SHAP_BACKGROUND_CLUSTERS, len(self.x_train_scaled)),
+                )
+                self._explainers = {
+                    "classical": shap.KernelExplainer(self.classical_probabilities, background),
+                    "quantum": shap.KernelExplainer(self.quantum_scores, background),
+                }
+            return self._explainers
+
+    def to_model_space(self, features: np.ndarray) -> np.ndarray:
+        return self.scaler.transform(self.pca.transform(features))
+
 
 bundle = ModelBundle()
 
 
 class PatientFeatures(BaseModel):
     features: List[float] = Field(..., min_length=30, max_length=30)
+
+
+class PatientBatch(BaseModel):
+    patients: List[List[float]] = Field(..., min_length=1, max_length=MAX_PATIENTS)
+
+
+class PatientPlotRequest(PatientBatch):
+    patient: int = Field(1, ge=1)
+
+
+def _explain_batch(patients: List[List[float]]) -> dict:
+    for idx, row in enumerate(patients):
+        if len(row) != 30:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Patient {idx + 1} has {len(row)} features; exactly 30 are required",
+            )
+
+    try:
+        bundle.train_or_load()
+        x_scaled = bundle.to_model_space(np.array(patients, dtype=float))
+        explainers = bundle.explainers()
+        with _shap_lock:
+            shap_values = {
+                "quantum": np.atleast_2d(explainers["quantum"].shap_values(x_scaled, silent=True)),
+                "classical": np.atleast_2d(explainers["classical"].shap_values(x_scaled, silent=True)),
+            }
+        return {
+            "x_scaled": x_scaled,
+            "classical_probs": bundle.classical_probabilities(x_scaled),
+            "quantum_scores": bundle.quantum_scores(x_scaled),
+            "shap": shap_values,
+            "base_values": {
+                model: float(np.ravel(explainer.expected_value)[0])
+                for model, explainer in explainers.items()
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP explanation failed: {str(e)}")
 
 
 @router.get("/health")
@@ -203,50 +311,103 @@ def predict(payload: PatientFeatures):
     }
 
 
-@router.get("/shap")
-def get_shap_explanation(sample_type: str = "malignant"):
+@router.post("/explain")
+def explain_patients(payload: PatientBatch):
+    batch = _explain_batch(payload.patients)
+    x_scaled = batch["x_scaled"]
+
+    def contributions(values, row):
+        return [
+            {
+                "feature": bundle.component_labels[i],
+                "value": round(float(row[i]), 4),
+                "shap_value": round(float(values[i]), 4),
+            }
+            for i in range(len(bundle.component_labels))
+        ]
+
+    results = []
+    for idx in range(len(x_scaled)):
+        prob = float(batch["classical_probs"][idx])
+        score = float(batch["quantum_scores"][idx])
+        results.append({
+            "patient": idx + 1,
+            "classical": {
+                "prediction": "malignant" if prob > 0.5 else "benign",
+                "probability_malignant": round(prob, 4),
+                "features": contributions(batch["shap"]["classical"][idx], x_scaled[idx]),
+            },
+            "quantum": {
+                "prediction": "malignant" if score > 0 else "benign",
+                "raw_score": round(score, 4),
+                "features": contributions(batch["shap"]["quantum"][idx], x_scaled[idx]),
+            },
+        })
+
+    return {
+        "status": "success",
+        "explainer": "KernelExplainer",
+        "feature_labels": bundle.component_labels,
+        "base_values": {
+            model: round(value, 4) for model, value in batch["base_values"].items()
+        },
+        "results": results,
+    }
+
+
+@router.post("/explain/plots")
+def explain_patient_plots(payload: PatientPlotRequest):
+    if payload.patient > len(payload.patients):
+        raise HTTPException(status_code=400, detail=f"Patient {payload.patient} is not in the upload")
+
+    idx = payload.patient - 1
+    batch = _explain_batch([payload.patients[idx]])
+    score = float(batch["quantum_scores"][0])
+
     try:
-        import shap
-        data = load_breast_cancer()
-        X, y = data.data, np.where(data.target == 0, 1, 0)
-        
-        # Fit TreeExplainer on XGBoost
-        model = xgb.XGBClassifier(n_estimators=100, max_depth=3, eval_metric="logloss", random_state=42)
-        model.fit(X, y)
-        explainer = shap.TreeExplainer(model)
+        # Model-level attribution over the held-out test patients, computed once
+        X_global = bundle.x_test_scaled[:SHAP_GLOBAL_SAMPLES]
+        with _shap_lock:
+            if bundle._global_quantum_shap is None:
+                bundle._global_quantum_shap = np.atleast_2d(
+                    bundle.explainers()["quantum"].shap_values(X_global, silent=True)
+                )
+        plots = render_uploaded_patient_plots(
+            bundle.component_labels,
+            batch["shap"]["quantum"][0],
+            score,
+            bundle._global_quantum_shap,
+            X_global,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP plot rendering failed: {str(e)}")
 
-        # Select target sample based on requested diagnosis type
-        if sample_type == "benign":
-            target_indices = np.where(y == 0)[0]
-        else:
-            target_indices = np.where(y == 1)[0]
-            
-        sample_idx = int(target_indices[0])
-        shap_vals = explainer.shap_values(X[sample_idx:sample_idx+1])[0]
-        base_val = float(explainer.expected_value)
-        prob = float(model.predict_proba(X[sample_idx:sample_idx+1])[0][1])
+    return {
+        "status": "success",
+        "patient": payload.patient,
+        "quantum_score": round(score, 3),
+        "diagnosis": "Malignant" if score > 0 else "Benign",
+        "base_value": round(batch["base_values"]["quantum"], 4),
+        "fusion": fuse_risk(float(batch["classical_probs"][0]), score),
+        "benchmark": bundle.benchmark,
+        **plots,
+    }
 
-        features_list = []
-        for i, name in enumerate(data.feature_names):
-            features_list.append({
-                "feature": str(name),
-                "value": round(float(X[sample_idx][i]), 4),
-                "shap_value": round(float(shap_vals[i]), 4),
-                "contribution": round(float(shap_vals[i]), 4),
-            })
 
-        # Sort by absolute impact
-        features_list.sort(key=lambda item: abs(item["shap_value"]), reverse=True)
+@router.get("/shap")
+def get_shap_explanation(
+    dataset_id: str,
+    sample_type: str = "malignant",
+    target_column: str | None = None,
+):
+    if sample_type not in {"malignant", "benign"}:
+        raise HTTPException(status_code=400, detail="sample_type must be 'malignant' or 'benign'")
 
-        return {
-            "status": "success",
-            "condition": "Wisconsin Breast Cancer (WDBC)",
-            "sample_type": "Malignant" if sample_type == "malignant" else "Benign",
-            "base_value": round(base_val, 4),
-            "predicted_risk_probability": round(prob, 4),
-            "risk_level": "High Risk" if prob >= 0.7 else "Moderate Risk" if prob >= 0.3 else "Low Risk",
-            "top_features": features_list[:7],
-            "all_features": features_list,
-        }
+    try:
+        return explain_patient(dataset_id, sample_type, target_column)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' was not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SHAP explanation failed: {str(e)}")

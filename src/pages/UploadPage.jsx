@@ -15,8 +15,24 @@ import {
   Check,
   Split,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Target,
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
+import { ingestDatasetFiles, getSampleWDBC, getFeatureNames, explainPatients } from '../api/client';
+
+const LABEL_COLUMN_NAMES = ['diagnosis', 'target', 'label', 'class', 'outcome'];
+
+// Normalizes WDBC feature names so 'radius_mean' and 'mean radius' match the same feature
+const canonicalFeatureName = (name) => {
+  let n = name.trim().toLowerCase().replace(/[_\s]+/g, ' ');
+  let m;
+  if ((m = n.match(/^(.*) mean$/))) n = `mean ${m[1]}`;
+  else if ((m = n.match(/^(.*) (se|error)$/))) n = `${m[1]} error`;
+  else if ((m = n.match(/^(.*) worst$/))) n = `worst ${m[1]}`;
+  return n;
+};
 
 // Sample Wisconsin Diagnostic Breast Cancer dataset baseline
 const SAMPLE_WDBC_FEATURES = [
@@ -39,7 +55,7 @@ const SAMPLE_WDBC_DATA = [
   { Feature: 'Diagnosis', Type: 'Categorical', Example: 'M (Malignant)' },
 ];
 
-export default function UploadPage({ onContinueToPreprocessing }) {
+export default function UploadPage({ onContinueToPreprocessing, onViewPatientShap }) {
   // Upload mode: 'single' (full combined CSV) or 'split' (features.csv + target.csv)
   const [uploadMode, setUploadMode] = useState('single');
 
@@ -58,6 +74,15 @@ export default function UploadPage({ onContinueToPreprocessing }) {
   const [datasetInfo, setDatasetInfo] = useState(null);
   const [targetColumn, setTargetColumn] = useState('Diagnosis');
   const [previewTab, setPreviewTab] = useState('schema');
+
+  // Backend ingestion state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+
+  // Patient test state (file with features only, no diagnosis column)
+  const [isTesting, setIsTesting] = useState(false);
+  const [testError, setTestError] = useState(null);
+  const [testProgress, setTestProgress] = useState({ percent: 0, stage: '' });
 
   const fileInputRef = useRef(null);
   const featuresInputRef = useRef(null);
@@ -104,15 +129,17 @@ export default function UploadPage({ onContinueToPreprocessing }) {
         };
       });
 
-      const detectedTarget = headers.find(h => {
-        const lower = h.toLowerCase();
-        return lower === 'diagnosis' || lower === 'target' || lower === 'label' || lower === 'class' || lower === 'outcome';
-      }) || headers[headers.length - 1];
+      const labelColumn = headers.find(h => LABEL_COLUMN_NAMES.includes(h.toLowerCase()));
+      // No diagnosis column and only numeric measurements: these are patients to test, not training data
+      const isPatientTest = !labelColumn && schema.every(col => col.Type === 'Numeric');
 
-      setTargetColumn(detectedTarget);
+      setTargetColumn(labelColumn || headers[headers.length - 1]);
       setFile(fileObj);
+      setTestError(null);
       setDatasetInfo({
         mode: 'single',
+        isPatientTest,
+        patientRows: isPatientTest ? rows : null,
         name: fileObj.name,
         sizeMb: (fileObj.size / (1024 * 1024)).toFixed(2),
         rowCount: rows.length,
@@ -257,29 +284,6 @@ export default function UploadPage({ onContinueToPreprocessing }) {
   };
 
   // Sample demo loaders
-  const handleLoadSingleSample = () => {
-    const mockFile = { name: 'breast_cancer_dataset_full.csv', size: 124800 };
-    setFile(mockFile);
-    setTargetColumn('Diagnosis');
-    setDatasetInfo({
-      mode: 'single',
-      name: 'breast_cancer_dataset_full.csv',
-      sizeMb: '1.24',
-      rowCount: 569,
-      colCount: 31,
-      headers: [...SAMPLE_WDBC_FEATURES, 'Diagnosis'],
-      schema: SAMPLE_WDBC_DATA,
-      rawPreview: [
-        { radius_mean: '17.99', texture_mean: '10.38', perimeter_mean: '122.8', area_mean: '1001.0', smoothness_mean: '0.1184', Diagnosis: 'M' },
-        { radius_mean: '20.57', texture_mean: '17.77', perimeter_mean: '132.9', area_mean: '1326.0', smoothness_mean: '0.0847', Diagnosis: 'M' },
-        { radius_mean: '19.69', texture_mean: '21.25', perimeter_mean: '130.0', area_mean: '1203.0', smoothness_mean: '0.1096', Diagnosis: 'M' },
-        { radius_mean: '11.42', texture_mean: '20.38', perimeter_mean: '77.58', area_mean: '386.1', smoothness_mean: '0.1425', Diagnosis: 'B' },
-        { radius_mean: '20.29', texture_mean: '14.34', perimeter_mean: '135.1', area_mean: '1297.0', smoothness_mean: '0.1003', Diagnosis: 'M' },
-      ],
-      missingCount: 0
-    });
-  };
-
   const handleLoadSplitSample = () => {
     const fMock = { name: 'breast_cancer_features.csv', size: 120670 };
     const tMock = { name: 'breast_cancer_target.csv', size: 1718 };
@@ -288,6 +292,7 @@ export default function UploadPage({ onContinueToPreprocessing }) {
     setTargetColumn('Diagnosis');
     setDatasetInfo({
       mode: 'split',
+      isSample: true,
       featuresName: 'breast_cancer_features.csv',
       targetName: 'breast_cancer_target.csv',
       featuresSizeMb: '0.12',
@@ -313,9 +318,106 @@ export default function UploadPage({ onContinueToPreprocessing }) {
     setTargetFile(null);
     setDatasetInfo(null);
     setSplitError(null);
+    setSubmitError(null);
+    setTestError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (featuresInputRef.current) featuresInputRef.current.value = '';
     if (targetInputRef.current) targetInputRef.current.value = '';
+  };
+
+  // Send the dataset to the backend, then hand the stored dataset over to the pipeline
+  const handleContinue = async () => {
+    if (!datasetInfo || isSubmitting) return;
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      let resp;
+      if (datasetInfo.isSample) {
+        resp = await getSampleWDBC();
+      } else {
+        const formData = new FormData();
+        if (datasetInfo.mode === 'split') {
+          formData.append('features_file', featuresFile);
+          formData.append('target_file', targetFile);
+        } else {
+          formData.append('features_file', file);
+        }
+        resp = await ingestDatasetFiles(formData, targetColumn);
+      }
+
+      const ingested = {
+        ...datasetInfo,
+        id: resp.dataset_id,
+        filename: resp.filename,
+        rows: resp.dataset.rows,
+        columns: resp.dataset.columns,
+        features: resp.dataset.features,
+        target_column: resp.dataset.target_column,
+        target_classes: resp.dataset.target_classes,
+        profile: resp.profile,
+        validation: resp.validation
+      };
+
+      onContinueToPreprocessing && onContinueToPreprocessing(ingested, resp.dataset.target_column);
+    } catch (err) {
+      setSubmitError(err.message || 'Failed to upload the dataset to the backend.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Run every patient row through the trained XGBoost and quantum models, with SHAP attributions
+  const handleTestPatients = async () => {
+    if (!datasetInfo?.isPatientTest || isTesting) return;
+    setIsTesting(true);
+    setTestError(null);
+    setTestProgress({ percent: 5, stage: 'Loading model feature schema...' });
+    let creep = null;
+
+    try {
+      const { features: featureNames } = await getFeatureNames();
+      setTestProgress({ percent: 15, stage: 'Validating patient measurements...' });
+      const headerIndex = {};
+      datasetInfo.headers.forEach((h, i) => { headerIndex[canonicalFeatureName(h)] = i; });
+
+      const missing = featureNames.filter(f => headerIndex[canonicalFeatureName(f)] === undefined);
+      if (missing.length) {
+        throw new Error(`The file is missing ${missing.length} required feature(s): ${missing.join(', ')}`);
+      }
+
+      const patients = datasetInfo.patientRows.map((row, idx) => {
+        const features = featureNames.map(f => parseFloat(row[headerIndex[canonicalFeatureName(f)]]));
+        if (features.some(v => !Number.isFinite(v))) {
+          throw new Error(`Patient ${idx + 1} has missing or non-numeric values.`);
+        }
+        return features;
+      });
+      setTestProgress({ percent: 25, stage: 'Running XGBoost and quantum models, computing SHAP...' });
+      // The backend reports no progress, so ease towards 90% while waiting
+      creep = setInterval(() => {
+        setTestProgress(p => ({ ...p, percent: p.percent + (90 - p.percent) * 0.08 }));
+      }, 300);
+      const explanation = await explainPatients(patients);
+      clearInterval(creep);
+      setTestProgress({ percent: 100, stage: 'Done. Opening results...' });
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Patient predictions and SHAP are shown on the Results page
+      // File name, assessment time and (if the file has one) an age column, for the patient report
+      const ageIndex = datasetInfo.headers.findIndex(h => canonicalFeatureName(h) === canonicalFeatureName('age'));
+      const meta = {
+        fileName: datasetInfo.name,
+        assessedAt: new Date().toISOString(),
+        ages: ageIndex === -1 ? null : datasetInfo.patientRows.map(row => parseFloat(row[ageIndex])),
+      };
+      onViewPatientShap && onViewPatientShap({ ...explanation, patients, meta }, 1);
+    } catch (err) {
+      setTestError(err.message || 'Patient test failed.');
+    } finally {
+      clearInterval(creep);
+      setIsTesting(false);
+    }
   };
 
   return (
@@ -402,8 +504,8 @@ export default function UploadPage({ onContinueToPreprocessing }) {
               />
 
               <div className="max-w-md mx-auto flex flex-col items-center">
-                <div className="w-16 h-16 rounded-2xl bg-[#FAFAF7] border border-[#E7E5E0] flex items-center justify-center text-3xl mb-5 shadow-xs">
-                  📄
+                <div className="w-16 h-16 rounded-2xl bg-[#FAFAF7] border border-[#E7E5E0] flex items-center justify-center mb-5 shadow-xs">
+                  <FileText className="w-8 h-8 text-[#0F766E]" />
                 </div>
 
                 <h2 className="font-serif text-2xl text-[#14211F] mb-1 font-normal">
@@ -425,22 +527,6 @@ export default function UploadPage({ onContinueToPreprocessing }) {
                 >
                   <span>Browse Files</span>
                 </button>
-
-                <div className="mt-8 pt-6 border-t border-[#F0EFEA] w-full text-xs text-[#717E7B] flex flex-col sm:flex-row items-center justify-center gap-3 font-mono">
-                  <span>Supported format: .CSV</span>
-                  <span className="hidden sm:inline">•</span>
-                  <span>Maximum size: 50 MB</span>
-                </div>
-
-                <div className="mt-6 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleLoadSingleSample}
-                    className="text-xs font-medium text-[#0F766E] hover:text-[#0D655E] underline underline-offset-4 cursor-pointer transition-colors"
-                  >
-                    Need sample data? Load Wisconsin Biopsy Full Baseline (WDBC)
-                  </button>
-                </div>
               </div>
             </div>
           ) : (
@@ -481,8 +567,8 @@ export default function UploadPage({ onContinueToPreprocessing }) {
                   />
 
                   <div>
-                    <div className="w-12 h-12 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] mx-auto flex items-center justify-center text-2xl mb-3 shadow-xs">
-                      📊
+                    <div className="w-12 h-12 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] mx-auto flex items-center justify-center mb-3 shadow-xs">
+                      <Table className="w-6 h-6 text-[#0F766E]" />
                     </div>
                     <div className="text-[11px] font-mono uppercase font-semibold text-[#0F766E] mb-1">
                       Step 1 of 2
@@ -542,8 +628,8 @@ export default function UploadPage({ onContinueToPreprocessing }) {
                   />
 
                   <div>
-                    <div className="w-12 h-12 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] mx-auto flex items-center justify-center text-2xl mb-3 shadow-xs">
-                      🎯
+                    <div className="w-12 h-12 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] mx-auto flex items-center justify-center mb-3 shadow-xs">
+                      <Target className="w-6 h-6 text-[#0F766E]" />
                     </div>
                     <div className="text-[11px] font-mono uppercase font-semibold text-[#0F766E] mb-1">
                       Step 2 of 2
@@ -739,7 +825,7 @@ export default function UploadPage({ onContinueToPreprocessing }) {
                   Dataset Profile
                 </h3>
                 <span className="text-xs font-mono text-[#0F766E] bg-[#0F766E]/10 px-2.5 py-0.5 rounded-full border border-[#0F766E]/20">
-                  Ready for Pipeline
+                  {datasetInfo.isPatientTest ? 'Ready for Testing' : 'Ready for Benchmarks'}
                 </span>
               </div>
 
@@ -760,7 +846,7 @@ export default function UploadPage({ onContinueToPreprocessing }) {
                     <CheckCircle2 className="w-4 h-4 text-[#0F766E] shrink-0" />
                     <span className="text-xs font-medium text-[#5B6664]">Dataset loaded</span>
                   </div>
-                  <span className="font-mono text-xs font-semibold text-[#14211F]">{datasetInfo.rowCount} samples</span>
+                  <span className="font-mono text-xs font-semibold text-[#14211F]">{datasetInfo.rowCount} {datasetInfo.isPatientTest ? (datasetInfo.rowCount === 1 ? 'patient' : 'patients') : 'samples'}</span>
                 </div>
 
                 <div className="p-3.5 bg-[#FAFAF7] rounded-[10px] border border-[#E7E5E0] flex items-center justify-between">
@@ -768,15 +854,15 @@ export default function UploadPage({ onContinueToPreprocessing }) {
                     <CheckCircle2 className="w-4 h-4 text-[#0F766E] shrink-0" />
                     <span className="text-xs font-medium text-[#5B6664]">Features</span>
                   </div>
-                  <span className="font-mono text-xs font-semibold text-[#14211F]">{datasetInfo.colCount - 1}</span>
+                  <span className="font-mono text-xs font-semibold text-[#14211F]">{datasetInfo.isPatientTest ? datasetInfo.colCount : datasetInfo.colCount - 1}</span>
                 </div>
 
                 <div className="p-3.5 bg-[#FAFAF7] rounded-[10px] border border-[#E7E5E0] flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-[#0F766E] shrink-0" />
-                    <span className="text-xs font-medium text-[#5B6664]">Target detected</span>
+                    <span className="text-xs font-medium text-[#5B6664]">{datasetInfo.isPatientTest ? 'Diagnosis column' : 'Target detected'}</span>
                   </div>
-                  <span className="font-mono text-xs font-semibold text-[#0F766E]">{targetColumn}</span>
+                  <span className="font-mono text-xs font-semibold text-[#0F766E]">{datasetInfo.isPatientTest ? 'None (to predict)' : targetColumn}</span>
                 </div>
 
                 <div className="p-3.5 bg-[#FAFAF7] rounded-[10px] border border-[#E7E5E0] flex items-center justify-between">
@@ -797,6 +883,65 @@ export default function UploadPage({ onContinueToPreprocessing }) {
               </div>
             </div>
 
+            {datasetInfo.isPatientTest ? (
+            /* =========================================================================
+                6. PATIENT TEST (features only, no diagnosis column)
+               ========================================================================= */
+            <div className="clinical-card bg-white p-6 sm:p-8 rounded-[16px] border border-[#E7E5E0] space-y-5">
+              <div>
+                <h3 className="font-serif text-2xl text-[#14211F] mb-1">
+                  Test Patient{datasetInfo.rowCount === 1 ? '' : 's'}
+                </h3>
+                <p className="text-xs text-[#5B6664]">
+                  This file has no diagnosis column, so each row is treated as a patient to test. MAGI predicts whether each patient is malignant or benign using the trained XGBoost and quantum (VQC) models, then opens the Results page with the SHAP explanation.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleTestPatients}
+                disabled={isTesting}
+                className={`clinical-btn-primary group px-7 py-3 w-full sm:w-auto ${isTesting ? 'opacity-70 cursor-wait' : 'cursor-pointer'}`}
+              >
+                {isTesting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Testing...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Run Patient Test</span>
+                    <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
+                  </>
+                )}
+              </button>
+
+              {isTesting && (
+                <div className="space-y-2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(testProgress.percent)}>
+                  <div className="flex justify-between text-[11px] font-mono text-[#5B6664]">
+                    <span>{testProgress.stage}</span>
+                    <span>{Math.round(testProgress.percent)}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-[#F1F0EC] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[#0F766E] transition-all duration-300 ease-out"
+                      style={{ width: `${testProgress.percent}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-[#717E7B]">The first run can take ~30s while the models load.</p>
+                </div>
+              )}
+
+              {testError && (
+                <div className="p-4 rounded-xl bg-rose-50 text-rose-800 text-xs border border-rose-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Patient test failed: {testError}</span>
+                </div>
+              )}
+
+            </div>
+            ) : (
+            <>
             {/* =========================================================================
                 6. TARGET SELECTION
                ========================================================================= */}
@@ -841,27 +986,46 @@ export default function UploadPage({ onContinueToPreprocessing }) {
             <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-6 border-t border-[#E7E5E0]">
               <div className="flex items-center gap-1.5 text-xs font-mono text-[#5B6664] overflow-x-auto w-full sm:w-auto pb-2 sm:pb-0">
                 <span className="font-semibold text-[#0F766E] px-2 py-0.5 rounded bg-[#0F766E]/10">UPLOAD</span>
-                <span>→</span>
+                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#A3ADAB]" />
                 <span className="text-[#14211F] font-medium">DATA PROFILE</span>
-                <span>→</span>
+                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#A3ADAB]" />
                 <span className="text-[#717E7B]">PREPROCESSING</span>
-                <span>→</span>
+                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#A3ADAB]" />
                 <span className="text-[#717E7B]">TRAINING</span>
-                <span>→</span>
+                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#A3ADAB]" />
                 <span className="text-[#717E7B]">BENCHMARKING</span>
-                <span>→</span>
+                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#A3ADAB]" />
                 <span className="text-[#717E7B]">RESULTS</span>
               </div>
 
               <button
                 type="button"
-                onClick={() => onContinueToPreprocessing && onContinueToPreprocessing(datasetInfo, targetColumn)}
-                className="clinical-btn-primary group px-7 py-3 w-full sm:w-auto cursor-pointer"
+                onClick={handleContinue}
+                disabled={isSubmitting}
+                className={`clinical-btn-primary group px-7 py-3 w-full sm:w-auto ${isSubmitting ? 'opacity-70 cursor-wait' : 'cursor-pointer'}`}
               >
-                <span>Continue to Preprocessing</span>
-                <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Uploading dataset...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Continue to Preprocessing</span>
+                    <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
+                  </>
+                )}
               </button>
             </div>
+
+            {submitError && (
+              <div className="p-4 rounded-xl bg-rose-50 text-rose-800 text-xs border border-rose-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Dataset upload failed: {submitError}</span>
+              </div>
+            )}
+            </>
+            )}
 
           </div>
         )}

@@ -16,7 +16,8 @@ METADATA_DIR.mkdir(parents=True, exist_ok=True)
 def save_dataset(
     df: pd.DataFrame,
     filename: str | None = None,
-    target_column: str | None = None
+    target_column: str | None = None,
+    extra_metadata: dict | None = None
 ) -> str:
 
     dataset_id = str(uuid.uuid4())
@@ -33,6 +34,7 @@ def save_dataset(
         "columns": int(df.shape[1]),
         "features": int(df.shape[1] - 1),
         "target_column": target_column,
+        **(extra_metadata or {}),
     }
 
     with open(

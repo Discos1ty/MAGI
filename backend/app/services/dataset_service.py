@@ -131,3 +131,14 @@ def extract_and_encode_target(df: pd.DataFrame, target_column: str | None = None
         y = y_raw.map(str_map).fillna(0).astype(int)
 
     return X, y, col
+
+
+def resolve_malignant_class(y_raw: pd.Series, metadata: dict) -> int:
+    """
+    Returns the encoded value (0 or 1) that means malignant.
+    Text labels (M/B, malignant/benign) are encoded with malignant = 1.
+    Numeric 0/1 labels are taken as-is, unless the dataset records otherwise.
+    """
+    if "malignant_value" in metadata and set(y_raw.dropna().unique()).issubset({0, 1}):
+        return int(metadata["malignant_value"])
+    return 1

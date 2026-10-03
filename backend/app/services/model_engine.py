@@ -29,6 +29,13 @@ class ModelEngine:
 
         return circuit
 
+    def vqc_scores(self, weights, X):
+        # Broadcast all rows through the circuit in a single call; returns one
+        # expectation value in [-1, 1] per row (> 0 means encoded class 1).
+        circuit = self._build_vqc_circuit()
+        features = np.atleast_2d(np.asarray(X, dtype=float)).T
+        return np.atleast_1d(np.asarray(circuit(weights, features), dtype=float))
+
     def train_and_predict(self, model_type: str, X_train, y_train, X_test, y_test):
         t0 = time.time()
         y_train_arr = np.array(y_train).ravel()
@@ -43,6 +50,7 @@ class ModelEngine:
                 eval_metric="logloss",
             )
             model.fit(X_train, y_train_arr)
+            trained_model = model
             t_train = time.time() - t0
 
             t_inf_start = time.time()
@@ -64,6 +72,12 @@ class ModelEngine:
                 "model": "XGBoost",
                 "n_estimators": 100,
                 "max_depth": 3,
+                "learning_rate": 0.1,
+                "objective": "binary:logistic",
+                "library": f"XGBoost {xgb.__version__}",
+                "train_samples": int(len(X_train)),
+                "test_samples": int(len(X_test)),
+                "input_features": int(np.shape(X_train)[1]),
             }
 
         elif model_type == "vqc":
@@ -86,8 +100,13 @@ class ModelEngine:
                 preds = [circuit(w, x) for x in X_sub]
                 return pnp.mean((y_sub - pnp.array(preds)) ** 2)
 
+            # step_and_cost gives the same update as step, plus the loss before it
+            loss_history = []
             for _ in range(epochs):
-                weights = opt.step(cost, weights)
+                weights, loss = opt.step_and_cost(cost, weights)
+                loss_history.append(round(float(loss), 4))
+            loss_history.append(round(float(cost(weights)), 4))
+            trained_model = weights
 
             t_train = time.time() - t0
 
@@ -110,6 +129,17 @@ class ModelEngine:
                 "qubits": self.n_qubits,
                 "layers": self.n_layers,
                 "epochs": epochs,
+                "learning_rate": 0.08,
+                "optimizer": "Adam",
+                "loss": "MSE",
+                "loss_history": loss_history,
+                "trainable_parameters": int(self.n_layers * self.n_qubits),
+                "library": f"PennyLane {qml.__version__}",
+                "device": self.dev.name,
+                "train_samples": int(sub_idx),
+                "train_pool": int(len(X_train)),
+                "test_samples": int(len(X_test)),
+                "input_features": int(np.shape(X_train)[1]),
             }
 
         else:
@@ -127,12 +157,11 @@ class ModelEngine:
         except Exception:
             roc_auc = acc
 
-        cm = confusion_matrix(y_test_arr, y_pred)
-        if cm.shape == (2, 2):
-            tn, fp, fn, tp = cm.ravel()
-            specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 1.0
-        else:
-            specificity = 1.0
+        cm = confusion_matrix(y_test_arr, y_pred, labels=[0, 1])
+        tn, fp, fn, tp = (int(v) for v in cm.ravel())
+        specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 1.0
+        # Encoded class 1 is the positive class
+        train_meta["confusion_matrix"] = {"tn": tn, "fp": fp, "fn": fn, "tp": tp}
 
         metrics_obj = SimpleNamespace(
             accuracy=round(acc, 4),
@@ -151,4 +180,5 @@ class ModelEngine:
             "train": train_meta,
             "result": SimpleNamespace(metrics=metrics_obj, timing=timing_obj),
             "config": config,
+            "model": trained_model,
         }

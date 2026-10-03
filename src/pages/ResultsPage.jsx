@@ -9,11 +9,11 @@ import {
   ChevronUp,
   Cpu,
   Database,
-  Download,
   FileSpreadsheet,
   Flame,
   Info,
   Layers,
+  Lock,
   Printer,
   RefreshCw,
   RotateCcw,
@@ -21,124 +21,103 @@ import {
   ShieldCheck,
   Sliders,
   Sparkles,
-  Zap
+  Zap,
+  ArrowLeft,
+  ArrowDown,
+  Check,
+  ClipboardCheck,
+  Pencil
 } from 'lucide-react';
-import { getShapExplanation, checkBackendHealth } from '../api/client';
+import { getPatientShapPlots, checkBackendHealth } from '../api/client';
+import PatientReportModal from '../components/PatientReport.jsx';
+
+const FEEDBACK_QUESTIONS = [
+  {
+    id: 'xaiDiscrepancies',
+    question: 'Are there any discrepancies found in the explainable part of our model?',
+  },
+  {
+    id: 'predictionSufficient',
+    question: "Do you consider the model's prediction sufficiently accurate to support the generation of a clinical report based on the provided data?",
+  },
+  {
+    id: 'performanceAdequate',
+    question: 'Does the reported model performance appear adequate for further clinical validation?',
+  },
+];
 
 export default function ResultsPage({
-  dataset,
-  pipelineData,
+  patientTest,
   onNavigateToUpload,
   onNavigateToPipeline
 }) {
-  // Active sample view for SHAP: 'malignant' (High Risk) vs 'benign' (Low Risk)
-  const [selectedSampleType, setSelectedSampleType] = useState('malignant');
-  const [shapData, setShapData] = useState(null);
-  const [loadingShap, setLoadingShap] = useState(true);
-  const [shapError, setShapError] = useState(null);
-
-  // Active sub-tab in benchmarking or insights
-  const [benchmarkView, setBenchmarkView] = useState('metrics'); // 'metrics', 'roc', 'confusion'
-  const [saveStatus, setSaveStatus] = useState(null);
-
-  // Fetch real SHAP values from backend on mount and when sample type changes
+  // Uploaded patient currently shown in the patient SHAP section
+  const [selectedPatient, setSelectedPatient] = useState(patientTest?.selectedPatient ?? 1);
   useEffect(() => {
+    setSelectedPatient(patientTest?.selectedPatient ?? 1);
+  }, [patientTest]);
+  const patientResult = patientTest?.results?.find(r => r.patient === selectedPatient) || null;
+  const [patientPlots, setPatientPlots] = useState(null);
+  const [showReport, setShowReport] = useState(false);
+  // The report is built from uploaded patient data only
+  const noPatientData = !patientTest?.results?.length;
+
+  // Clinician feedback must be submitted before the report can be generated
+  const [feedback, setFeedback] = useState({});
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  useEffect(() => {
+    setFeedback({});
+    setFeedbackSubmitted(false);
+  }, [patientTest]);
+  const feedbackComplete = FEEDBACK_QUESTIONS.every(({ id }) => feedback[id]);
+  const reportLocked = noPatientData || !feedbackSubmitted;
+  const reportLockedMessage = noPatientData
+    ? 'Please add patient data in the Upload section first. The report will then be ready to preview and download.'
+    : 'Please complete and submit the Clinician Feedback form below to generate the report.';
+  const [loadingPatientPlots, setLoadingPatientPlots] = useState(false);
+  const [patientPlotsError, setPatientPlotsError] = useState(null);
+
+  // Render SHAP plots for the selected uploaded patient
+  useEffect(() => {
+    if (!patientTest?.patients) return undefined;
     let isMounted = true;
-    setLoadingShap(true);
-    setShapError(null);
+    setLoadingPatientPlots(true);
+    setPatientPlotsError(null);
+    getPatientShapPlots(patientTest.patients, selectedPatient)
+      .then((data) => { if (isMounted) setPatientPlots(data); })
+      .catch((err) => { if (isMounted) setPatientPlotsError(err.message || 'Failed to render SHAP plots.'); })
+      .finally(() => { if (isMounted) setLoadingPatientPlots(false); });
+    return () => { isMounted = false; };
+  }, [patientTest, selectedPatient]);
 
-    getShapExplanation(selectedSampleType)
-      .then((data) => {
-        if (isMounted) {
-          setShapData(data);
-          setLoadingShap(false);
-        }
-      })
-      .catch((err) => {
-        console.error('SHAP fetch error:', err);
-        if (isMounted) {
-          setShapError(err.message || 'Failed to load live SHAP explanation.');
-          setLoadingShap(false);
-        }
-      });
+  // Results only ever show uploaded patient data, never the benchmark dataset
+  const showPatientShap = Boolean(patientResult);
+  const activeShap = showPatientShap
+    ? patientPlots && {
+        ...patientPlots,
+        features: [...patientResult.quantum.features].sort((a, b) => Math.abs(b.shap_value) - Math.abs(a.shap_value)),
+      }
+    : null;
+  const patientShap = activeShap;
 
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedSampleType]);
-
-  // Derived or default metrics from pipeline execution or verified WDBC runs
-  const xgbMetrics = pipelineData?.xgbResults?.metrics || {
-    accuracy: 0.9298,
-    f1: 0.9444,
-    sensitivity: 0.9444,
-    specificity: 0.9048,
-    roc_auc: 0.9851
-  };
-
-  const vqcMetrics = pipelineData?.vqcResults?.metrics || {
-    accuracy: 0.8158,
-    f1: 0.8662,
-    sensitivity: 0.9444,
-    specificity: 0.5952,
-    roc_auc: 0.8720
-  };
-
-  const hybridRiskProb = selectedSampleType === 'malignant' ? 0.924 : 0.082;
-  const isHighRisk = hybridRiskProb >= 0.5;
-
-  // Handle Export / Download Experiment JSON
-  const handleExportJSON = () => {
-    const experimentPayload = {
-      experiment_id: 'MAGI-EXP-' + Date.now().toString(36).toUpperCase(),
-      date: new Date().toISOString(),
-      dataset: {
-        name: dataset?.filename || dataset?.name || 'breast_cancer_dataset_full.csv',
-        samples: 569,
-        features: 30,
-        target: 'Diagnosis (Malignant / Benign)'
-      },
-      prediction: {
-        condition: 'Breast Cancer (Wisconsin Diagnostic WDBC)',
-        sample_tested: selectedSampleType,
-        model_predicted_risk: hybridRiskProb,
-        risk_level: isHighRisk ? 'High Risk' : 'Low Risk',
-        calibrated_probability: `${(hybridRiskProb * 100).toFixed(1)}%`
-      },
-      models: {
-        classical_xgboost: {
-          metrics: xgbMetrics,
-          latency_s: 0.0039
-        },
-        quantum_vqc: {
-          metrics: vqcMetrics,
-          qubits: 4,
-          layers: 3,
-          simulator: 'PennyLane default.qubit (Ideal)',
-          latency_s: 0.4445
-        },
-        hybrid_fusion: {
-          fusion_type: 'Soft-Voting Consensus Ensemble',
-          auc: 0.991
-        }
-      },
-      explainability_shap: shapData?.top_features || []
-    };
-
-    const blob = new Blob([JSON.stringify(experimentPayload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `MAGI_Experiment_Report_${selectedSampleType}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    setSaveStatus('Exported JSON successfully!');
-    setTimeout(() => setSaveStatus(null), 3500);
-  };
+  // Real soft-voting risk for the patient explained in section 2
+  const fusion = activeShap?.fusion || null;
+  const fusionLoading = !fusion && loadingPatientPlots;
+  const isHighRisk = fusion ? fusion.risk_probability >= 0.5 : false;
+  const fusionSubject = showPatientShap ? `uploaded patient #${patientResult.patient}` : '';
+  const formatPct = (value) => `${(value * 100).toFixed(1)}%`;
+  // Held-out test-set benchmark (malignant = positive) of the same models that made the prediction
+  const benchmark = activeShap?.benchmark || null;
+  const summaryStages = [
+    ['Patient File Upload', showPatientShap],
+    ['PCA Quantum Prep', Boolean(benchmark)],
+    ['Classical ML (XGBoost)', Boolean(benchmark)],
+    ['Quantum ML (VQC)', Boolean(benchmark)],
+    ['SHAP XAI Attribution', Boolean(activeShap?.patient_xai_plot)],
+  ];
 
   return (
-    <div className="min-h-screen bg-[#FAFAF7] text-[#14211F] py-8 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen text-[#14211F] py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-[1240px] mx-auto space-y-10">
 
         {/* =========================================================================
@@ -157,62 +136,38 @@ export default function ResultsPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Sample Selector Toggle */}
-            <div className="inline-flex p-1 rounded-xl bg-white border border-[#E7E5E0] shadow-xs text-xs font-medium">
+            <div className="relative group">
               <button
                 type="button"
-                onClick={() => setSelectedSampleType('malignant')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  selectedSampleType === 'malignant'
-                    ? 'bg-rose-500 text-white font-semibold shadow-xs'
-                    : 'text-[#5B6664] hover:text-[#14211F]'
+                aria-disabled={reportLocked}
+                aria-describedby={reportLocked ? 'print-report-locked' : undefined}
+                onClick={() => { if (!reportLocked) setShowReport(true); }}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border shadow-xs ${
+                  reportLocked
+                    ? 'bg-[#F1F0EC] border-[#E7E5E0] text-[#9AA3A1] cursor-not-allowed'
+                    : 'bg-white hover:bg-gray-50 border-[#E7E5E0] text-[#14211F] cursor-pointer'
                 }`}
               >
-                Malignant Cohort
+                {reportLocked
+                  ? <Lock className="w-3.5 h-3.5" />
+                  : <Printer className="w-3.5 h-3.5 text-[#5B6664]" />}
+                <span>Print Report</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setSelectedSampleType('benign')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  selectedSampleType === 'benign'
-                    ? 'bg-teal-600 text-white font-semibold shadow-xs'
-                    : 'text-[#5B6664] hover:text-[#14211F]'
-                }`}
-              >
-                Benign Cohort
-              </button>
+              {reportLocked && (
+                <div
+                  id="print-report-locked"
+                  role="tooltip"
+                  className="pointer-events-none absolute right-0 top-full mt-2 w-64 z-20 rounded-xl bg-[#14211F] text-white text-[11px] leading-relaxed px-3 py-2 shadow-lg opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0"
+                >
+                  {reportLockedMessage}
+                </div>
+              )}
             </div>
-
-            <button
-              onClick={handleExportJSON}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium bg-white hover:bg-gray-50 border border-[#E7E5E0] text-[#14211F] shadow-xs cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-[#0F766E]" />
-              <span>Export JSON</span>
-            </button>
-
-            <button
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium bg-white hover:bg-gray-50 border border-[#E7E5E0] text-[#14211F] shadow-xs cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5 text-[#5B6664]" />
-              <span>Print Report</span>
-            </button>
           </div>
         </div>
 
-        {saveStatus && (
-          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between animate-clinical-fade">
-            <span className="flex items-center gap-2 font-medium">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              {saveStatus}
-            </span>
-            <button onClick={() => setSaveStatus(null)} className="text-emerald-700 hover:text-emerald-900 cursor-pointer">✕</button>
-          </div>
-        )}
-
         {/* =========================================================================
-            1. 🔴 THE HEADLINE: EARLY DISEASE DETECTION
+            1. THE HEADLINE: EARLY DISEASE DETECTION
            ========================================================================= */}
         <section className="clinical-card bg-gradient-to-br from-white via-white to-[#FFF5F5] rounded-[22px] border-2 border-rose-200/80 p-6 sm:p-9 shadow-md relative overflow-hidden">
           <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/5 rounded-full blur-3xl pointer-events-none" />
@@ -244,53 +199,60 @@ export default function ResultsPage({
                 </p>
               </div>
 
-              {/* Hybrid Model Fusion Specification */}
+              {/* Models Compared */}
               <div className="p-4 rounded-xl bg-white border border-[#E7E5E0] space-y-2.5">
                 <div className="flex items-center justify-between text-xs font-medium text-[#14211F]">
                   <span className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-[#0F766E]" />
-                    <span>Hybrid Model Fusion Protocol</span>
-                  </span>
-                  <span className="font-mono text-[11px] text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
-                    Soft-Voting Consensus
+                    <span>Models Compared</span>
                   </span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-center text-xs pt-1">
-                  <div className="p-2 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0]">
-                    <span className="text-[10px] text-[#717E7B]">Classical ML</span>
-                    <div className="font-semibold text-[#14211F]">XGBoost</div>
-                    <span className="text-[10px] text-emerald-700">93.0% Acc</span>
-                  </div>
-                  <div className="p-2 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0]">
-                    <span className="text-[10px] text-[#717E7B]">Quantum ML</span>
-                    <div className="font-semibold text-[#14211F]">4-Qubit VQC</div>
-                    <span className="text-[10px] text-teal-700">94.4% Recall</span>
-                  </div>
-                  <div className="p-2 rounded-lg bg-[#0F766E]/10 border border-[#0F766E]/30 text-[#0F766E]">
-                    <span className="text-[10px] text-[#0F766E]">Decision Fusion</span>
-                    <div className="font-bold">Calibrated</div>
-                    <span className="text-[10px]">99.1% AUC</span>
-                  </div>
+                <div className="grid grid-cols-2 gap-2 text-center text-xs pt-1">
+                  {[
+                    ['Classical ML', 'XGBoost', 'classical', 'text-emerald-700'],
+                    ['Quantum ML', '4-Qubit VQC', 'quantum', 'text-teal-700'],
+                  ].map(([paradigm, name, key, color]) => (
+                    <div key={key} className="p-2 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0]">
+                      <span className="text-[10px] text-[#717E7B]">{paradigm}</span>
+                      <div className="font-semibold text-[#14211F]">{name}</div>
+                      <span className={`text-[10px] ${color}`}>
+                        {benchmark?.[key]
+                          ? `${formatPct(benchmark[key].metrics.accuracy)} Acc · ${formatPct(benchmark[key].metrics.sensitivity)} Recall`
+                          : '—'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
+                <p className="text-[10px] text-[#717E7B]">
+                  {benchmark
+                    ? 'Held-out test-set results of the pre-trained models used for uploaded patients.'
+                    : 'Test-set results appear once a patient file is uploaded.'}
+                </p>
               </div>
             </div>
 
             {/* Dominant Risk Box */}
             <div className="lg:col-span-5 flex justify-center">
               <div className={`w-full max-w-sm rounded-[20px] p-7 text-center border-2 transition-all duration-300 shadow-xl ${
-                isHighRisk
+                !fusion
+                  ? 'bg-white border-[#E7E5E0] shadow-black/5'
+                  : isHighRisk
                   ? 'bg-gradient-to-b from-rose-50 to-white border-rose-300 shadow-rose-500/10'
                   : 'bg-gradient-to-b from-emerald-50 to-white border-emerald-300 shadow-emerald-500/10'
               }`}>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider mb-3 bg-white border shadow-xs"
-                     style={{ color: isHighRisk ? '#E11D48' : '#0F766E', borderColor: isHighRisk ? '#FECDD3' : '#CCFBF1' }}>
-                  {isHighRisk ? <ShieldAlert className="w-3.5 h-3.5 text-rose-600" /> : <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />}
-                  <span>{isHighRisk ? 'HIGH RISK' : 'LOW RISK / BENIGN'}</span>
-                </div>
+                {fusion && (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider mb-3 bg-white border shadow-xs"
+                       style={{ color: isHighRisk ? '#E11D48' : '#0F766E', borderColor: isHighRisk ? '#FECDD3' : '#CCFBF1' }}>
+                    {isHighRisk ? <ShieldAlert className="w-3.5 h-3.5 text-rose-600" /> : <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />}
+                    <span>{isHighRisk ? 'HIGH RISK' : 'LOW RISK / BENIGN'}</span>
+                  </div>
+                )}
 
                 <div className="my-2">
                   <div className="font-serif text-5xl sm:text-6xl font-bold tracking-tight text-[#14211F]">
-                    {(hybridRiskProb * 100).toFixed(1)}%
+                    {fusion ? formatPct(fusion.risk_probability) : fusionLoading
+                      ? <RefreshCw className="w-10 h-10 mx-auto animate-spin text-[#0F766E]" />
+                      : '—'}
                   </div>
                   <div className="text-xs font-mono uppercase tracking-wider text-[#5B6664] mt-1 font-semibold">
                     Predicted Risk Probability
@@ -298,9 +260,11 @@ export default function ResultsPage({
                 </div>
 
                 <p className="text-[11px] text-[#717E7B] mt-3 border-t border-gray-200/70 pt-3">
-                  {isHighRisk
-                    ? 'Elevated biomarker variance aligns with high-grade malignant carcinoma indicators.'
-                    : 'Cellular features fall safely within normative benign morphological boundaries.'}
+                  {fusion
+                    ? `Mean of XGBoost P(malignant) ${formatPct(fusion.classical_probability)} and VQC ${formatPct(fusion.quantum_probability)} for ${fusionSubject}.`
+                    : fusionLoading
+                      ? 'Computing the risk from both models...'
+                      : 'Upload a patient file to compute a real risk probability.'}
                 </p>
 
                 <div className="mt-4 pt-1">
@@ -318,7 +282,7 @@ export default function ResultsPage({
         </section>
 
         {/* =========================================================================
-            2. 🔍 WHY THIS PREDICTION? (SHAP / XAI FEATURE CONTRIBUTIONS)
+            2. WHY THIS PREDICTION? (SHAP / XAI FEATURE CONTRIBUTIONS)
            ========================================================================= */}
         <section id="explainability" className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-[#E7E5E0]">
@@ -327,549 +291,316 @@ export default function ResultsPage({
                 <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
                   2. EXPLAINABLE AI (XAI)
                 </span>
-                <span className="text-xs text-[#717E7B] font-mono">TreeExplainer Shapley Decomposition</span>
+                <span className="text-xs text-[#717E7B] font-mono">KernelExplainer · 4-Qubit VQC</span>
               </div>
               <h3 className="font-serif text-2xl text-[#14211F] mt-1">
                 What Influenced This Prediction?
               </h3>
             </div>
-            <div className="text-xs font-mono text-[#5B6664] bg-[#FAFAF7] px-3 py-1.5 rounded-lg border border-[#E7E5E0]">
-              Base Expectation Value: <strong>{shapData?.base_value ?? -0.665}</strong>
+            <div className="flex flex-wrap items-center gap-2">
+              {showPatientShap && patientTest.results.length > 1 && (
+                <div className="relative">
+                  <select
+                    aria-label="Uploaded patient"
+                    value={selectedPatient}
+                    onChange={(e) => setSelectedPatient(Number(e.target.value))}
+                    className="appearance-none pl-3 pr-8 py-1.5 rounded-lg border border-[#E7E5E0] bg-white text-xs font-mono text-[#14211F] cursor-pointer"
+                  >
+                    {patientTest.results.map((r) => (
+                      <option key={r.patient} value={r.patient}>
+                        Patient #{r.patient} · {r.quantum.prediction}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#717E7B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              )}
+              <div className="text-xs font-mono text-[#5B6664] bg-[#FAFAF7] px-3 py-1.5 rounded-lg border border-[#E7E5E0]">
+                Base Expectation Value: <strong>{patientShap?.base_value ?? '—'}</strong>
+              </div>
             </div>
           </div>
 
           <p className="text-xs sm:text-sm text-[#5B6664] leading-relaxed max-w-4xl">
-            Higher values of the top contributing features increased the model's predicted probability for the positive class (malignant), while features with negative contributions pushed the prediction in the opposite direction.
+            Shapley values for your uploaded patient, from the pre-trained quantum classifier.
+            Each of the 4 qubits receives one principal component, labelled with the biomarker that loads most heavily on it. Bars to the right pushed the quantum score towards malignant; bars to the left pushed it towards benign.
           </p>
 
-          {/* Interactive SHAP Feature Contribution Bars */}
-          {loadingShap ? (
+          {/* Backend-rendered SHAP plots */}
+          {!showPatientShap ? (
+            <div className="p-6 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] text-center space-y-3">
+              <p className="text-xs sm:text-sm text-[#5B6664]">
+                Upload a patient file (measurements without a diagnosis column) to see which biomarkers influenced the prediction.
+              </p>
+              <button
+                type="button"
+                onClick={onNavigateToUpload}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] text-white text-xs font-medium cursor-pointer"
+              >
+                Upload Patient Data
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : loadingPatientPlots ? (
             <div className="py-12 text-center text-xs font-mono text-[#717E7B] flex items-center justify-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin text-[#0F766E]" />
-              <span>Calculating live Shapley values from backend model...</span>
+              <span>Computing Shapley values for the quantum model...</span>
             </div>
-          ) : shapError ? (
-            <div className="p-4 rounded-xl bg-amber-50 text-amber-800 text-xs border border-amber-200">
-              Notice: Backend SHAP computed fallback values ({shapError})
+          ) : patientPlotsError ? (
+            <div className="p-4 rounded-xl bg-amber-50 text-amber-800 text-xs border border-amber-200 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>SHAP explanation unavailable: {patientPlotsError}</span>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex justify-between items-center text-[11px] font-mono text-[#717E7B] pb-1 border-b border-[#E7E5E0]/60">
-                <span>CLINICAL BIOMARKER FEATURE</span>
-                <span>OBSERVED VALUE</span>
-                <span className="text-right">SHAP CONTRIBUTION IMPACT</span>
+          ) : patientShap && (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[#5B6664]">
+                <span className="px-2 py-1 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0]">
+                  Uploaded patient #{patientResult.patient}
+                </span>
+                <span className="px-2 py-1 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0]">
+                  XGBoost: <strong className="capitalize">{patientResult.classical.prediction}</strong> ({(patientResult.classical.probability_malignant * 100).toFixed(1)}%)
+                </span>
+                <span className="px-2 py-1 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0]">
+                  Quantum score: <strong>{patientShap.quantum_score}</strong>
+                </span>
+                <span className={`px-2 py-1 rounded-lg border font-semibold ${
+                  patientShap.diagnosis === 'Malignant'
+                    ? 'bg-rose-50 border-rose-200 text-rose-700'
+                    : 'bg-[#0F766E]/10 border-[#0F766E]/30 text-[#0F766E]'
+                }`}>
+                  VQC diagnosis: {patientShap.diagnosis}
+                </span>
               </div>
 
-              {shapData?.top_features?.map((item, idx) => {
-                const isPositivePush = item.shap_value > 0;
-                const magnitude = Math.min(Math.abs(item.shap_value) * 35, 100);
-
-                return (
-                  <div key={idx} className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] hover:border-[#D1CFCA] transition-all text-xs">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 sm:w-1/3">
-                        <span className="font-mono text-[10px] text-[#717E7B]">#{idx + 1}</span>
-                        <strong className="text-[#14211F] capitalize font-mono text-xs">{item.feature}</strong>
-                      </div>
-
-                      <div className="sm:w-1/4 text-left sm:text-center text-[11px] font-mono text-[#5B6664]">
-                        Value: <strong>{item.value}</strong>
-                      </div>
-
-                      <div className="sm:w-1/3 flex items-center justify-end gap-3 font-mono">
-                        <span className={`text-xs font-semibold ${isPositivePush ? 'text-rose-600' : 'text-[#0F766E]'}`}>
-                          {item.shap_value > 0 ? `+${item.shap_value}` : item.shap_value}
-                        </span>
-
-                        {/* Directional Progress bar */}
-                        <div className="w-32 bg-[#E7E5E0] h-2 rounded-full overflow-hidden flex items-center">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              isPositivePush ? 'bg-rose-500' : 'bg-[#0F766E]'
-                            }`}
-                            style={{ width: `${magnitude}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <h4 className="font-serif text-lg text-[#14211F]">Biomarker Diagnostic Impact</h4>
+                  <div className="p-3 rounded-xl bg-white border border-[#E7E5E0]">
+                    <img
+                      src={patientShap.patient_xai_plot}
+                      alt="Local SHAP explanation for the selected patient"
+                      className="w-full h-auto rounded-lg"
+                    />
                   </div>
-                );
-              })}
+                </div>
+                <div className="space-y-3">
+                  <h4 className="font-serif text-lg text-[#14211F]">Global Model Attribution</h4>
+                  <div className="p-3 rounded-xl bg-white border border-[#E7E5E0]">
+                    <img
+                      src={patientShap.global_xai_plot}
+                      alt="Global SHAP summary across test patients"
+                      className="w-full h-auto rounded-lg"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
           {/* Visual Scale Diagram */}
           <div className="p-4 rounded-xl bg-[#F8FAF9] border border-[#E7E5E0] text-center space-y-2">
             <div className="flex items-center justify-between text-xs font-mono text-[#717E7B]">
-              <span className="text-[#0F766E] font-semibold">← Protective (Pushes to Benign)</span>
-              <span>Base Value ({shapData?.base_value ?? -0.665})</span>
-              <span className="text-rose-600 font-semibold">Risk Escalation (Pushes to Malignant) →</span>
+              <span className="inline-flex items-center gap-1 text-[#0F766E] font-semibold"><ArrowLeft className="w-3.5 h-3.5" />Protective (Pushes to Benign)</span>
+              <span>Base Value ({patientShap?.base_value ?? '—'})</span>
+              <span className="inline-flex items-center gap-1 text-rose-600 font-semibold">Risk Escalation (Pushes to Malignant)<ArrowRight className="w-3.5 h-3.5" /></span>
             </div>
             <div className="w-full h-1.5 bg-gradient-to-r from-[#0F766E] via-gray-300 to-rose-500 rounded-full" />
-            <p className="text-[11px] text-[#5B6664] pt-1">
-              Top features like <strong>worst area</strong> and <strong>worst concave points</strong> exert dominant positive attribution, validating why the hybrid system classified this biopsy into the High Risk category.
-            </p>
+            {patientShap?.features?.length > 0 && (
+              <p className="text-[11px] text-[#5B6664] pt-1">
+                <strong>{patientShap.features[0].feature}</strong> had the largest influence on this patient, pushing the quantum score towards{' '}
+                <strong>{patientShap.features[0].shap_value > 0 ? 'malignant' : 'benign'}</strong> ({patientShap.features[0].shap_value > 0 ? '+' : ''}{patientShap.features[0].shap_value}).
+              </p>
+            )}
           </div>
         </section>
 
         {/* =========================================================================
-            3. ⚛️ HYBRID INTELLIGENCE (MODEL FUSION ARCHITECTURE)
+            3. HYBRID INTELLIGENCE (CLASSICAL VS QUANTUM PREDICTION)
            ========================================================================= */}
         <section className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
           <div className="pb-4 border-b border-[#E7E5E0]">
             <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
-              3. MULTI-PARADIGM DECISION FUSION
+              3. MULTI-PARADIGM PREDICTION
             </span>
             <h3 className="font-serif text-2xl text-[#14211F] mt-1">
               Hybrid Intelligence Architecture
             </h3>
             <p className="text-xs text-[#5B6664] mt-0.5">
-              Decoupled classical tree decisions and quantum Hilbert state expectations synthesized via soft-voting probability fusion.
+              {fusion
+                ? `Independent classical and quantum predictions for ${fusionSubject}.`
+                : 'Independent classical and quantum predictions appear once a patient file is uploaded.'}
             </p>
           </div>
 
-          {/* ASCII / Graphical Fusion Flow */}
-          <div className="p-6 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] space-y-4">
+          <div className="p-6 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-center">
-              {/* Classical Tree Box */}
-              <div className="p-4 rounded-xl bg-white border border-[#E7E5E0] shadow-xs space-y-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded font-semibold">
-                  Classical Paradigm
-                </span>
-                <h4 className="font-serif text-lg font-bold text-[#14211F]">XGBoost Classifier</h4>
-                <div className="text-xs font-mono text-[#5B6664]">Prediction: <strong className="text-rose-600">Positive (Malignant)</strong></div>
-                <div className="text-xs font-mono text-[#5B6664]">Probability: <strong className="text-[#14211F]">99.1%</strong></div>
-                <p className="text-[11px] text-[#717E7B] pt-1">
-                  100 Gradient boosted trees optimizing multi-dimensional cross-entropy.
-                </p>
-              </div>
+              {[
+                {
+                  key: 'classical',
+                  paradigm: 'Classical Paradigm',
+                  paradigmClass: 'text-amber-700 bg-amber-100/70',
+                  name: 'XGBoost Classifier',
+                  prediction: fusion?.classical_prediction,
+                  malignant: fusion?.classical_probability,
+                  detail: fusion && `P(malignant): ${formatPct(fusion.classical_probability)}`,
+                  blurb: '100 gradient boosted trees optimizing cross-entropy.',
+                },
+                {
+                  key: 'quantum',
+                  paradigm: 'Quantum Paradigm',
+                  paradigmClass: 'text-[#0F766E] bg-[#0F766E]/15',
+                  name: 'Variational Quantum Classifier',
+                  prediction: fusion?.quantum_prediction,
+                  malignant: fusion?.quantum_probability,
+                  detail: fusion && `Expectation score: ${fusion.quantum_score > 0 ? '+' : ''}${fusion.quantum_score.toFixed(3)}`,
+                  blurb: '4-qubit circuit; expectation > 0 means malignant, < 0 benign.',
+                },
+              ].map((model) => {
+                const isMalignant = model.prediction === 'Malignant';
+                return (
+                  <div key={model.key} className="p-4 rounded-xl bg-white border border-[#E7E5E0] shadow-xs space-y-3">
+                    <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded font-semibold ${model.paradigmClass}`}>
+                      {model.paradigm}
+                    </span>
+                    <h4 className="font-serif text-lg font-bold text-[#14211F]">{model.name}</h4>
 
-              {/* Quantum Box */}
-              <div className="p-4 rounded-xl bg-white border border-[#E7E5E0] shadow-xs space-y-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] bg-[#0F766E]/15 px-2 py-0.5 rounded font-semibold">
-                  Quantum Paradigm
-                </span>
-                <h4 className="font-serif text-lg font-bold text-[#14211F]">Variational Quantum Classifier</h4>
-                <div className="text-xs font-mono text-[#5B6664]">Prediction: <strong className="text-rose-600">Positive (Malignant)</strong></div>
-                <div className="text-xs font-mono text-[#5B6664]">Expectation Score: <strong className="text-[#14211F]">+0.842</strong></div>
-                <p className="text-[11px] text-[#717E7B] pt-1">
-                  4-Qubit parameter-shift circuit evaluating non-linear Hilbert feature geometry.
-                </p>
-              </div>
-            </div>
+                    {model.prediction ? (
+                      <>
+                        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider border ${
+                          isMalignant
+                            ? 'bg-rose-50 border-rose-200 text-rose-700'
+                            : 'bg-[#0F766E]/10 border-[#0F766E]/30 text-[#0F766E]'
+                        }`}>
+                          {isMalignant ? <ShieldAlert className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                          <span>{model.prediction}</span>
+                        </div>
 
-            <div className="flex justify-center my-2">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#0F766E]/10 border border-[#0F766E]/30 text-[#0F766E] text-xs font-mono font-semibold">
-                <span>↓ Calibrated Soft-Voting Fusion ↓</span>
-              </div>
-            </div>
+                        <div className="space-y-1 text-left">
+                          <div className="flex justify-between text-[11px] font-mono">
+                            <span className="text-[#0F766E]">Benign {formatPct(1 - model.malignant)}</span>
+                            <span className="text-rose-600">Malignant {formatPct(model.malignant)}</span>
+                          </div>
+                          <div className="flex h-2 rounded-full overflow-hidden bg-[#F1F0EC]">
+                            <div className="bg-[#0F766E]" style={{ width: `${(1 - model.malignant) * 100}%` }} />
+                            <div className="bg-rose-500" style={{ width: `${model.malignant * 100}%` }} />
+                          </div>
+                        </div>
 
-            {/* Fusion Consensus Result */}
-            <div className="p-4 rounded-xl bg-[#F0FDF4] border border-[#CCFBF1] flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-              <div>
-                <span className="text-[10px] font-mono uppercase text-[#0F766E] font-bold">Consensus Verdict</span>
-                <div className="text-sm font-semibold text-[#14211F] mt-0.5">
-                  High-Risk Malignancy Detected (92.4% Calibrated Probability)
-                </div>
-                <div className="text-[11px] text-[#5B6664]">
-                  Dual-engine agreement: Zero discordance detected across classical and quantum predictions.
-                </div>
-              </div>
+                        <div className="text-xs font-mono text-[#5B6664]">{model.detail}</div>
+                      </>
+                    ) : (
+                      <div className="text-xs font-mono text-[#717E7B] py-3">
+                        {fusionLoading ? 'Computing prediction...' : 'No prediction yet'}
+                      </div>
+                    )}
 
-              <div className="shrink-0 font-mono text-right">
-                <div className="text-[10px] text-[#717E7B]">Consensus Rate</div>
-                <div className="text-lg font-bold text-[#0F766E]">100% Agreement</div>
-              </div>
+                    <p className="text-[11px] text-[#717E7B]">{model.blurb}</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>
 
         {/* =========================================================================
-            4. 📊 MODEL BENCHMARKING (COMPARATIVE METRICS, ROC CURVES, CONFUSION MATRIX)
+            4. CLINICIAN FEEDBACK (REQUIRED BEFORE REPORT GENERATION)
            ========================================================================= */}
-        <section className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#E7E5E0]">
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
-                4. STATISTICAL BENCHMARKING
-              </span>
-              <h3 className="font-serif text-2xl text-[#14211F] mt-1">
-                Comparative Performance Metrics
-              </h3>
-            </div>
-
-            {/* Sub-view switcher */}
-            <div className="inline-flex p-1 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] text-xs font-medium">
-              <button
-                type="button"
-                onClick={() => setBenchmarkView('metrics')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  benchmarkView === 'metrics' ? 'bg-white text-[#14211F] font-semibold shadow-xs' : 'text-[#717E7B]'
-                }`}
-              >
-                Table View
-              </button>
-              <button
-                type="button"
-                onClick={() => setBenchmarkView('roc')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  benchmarkView === 'roc' ? 'bg-white text-[#14211F] font-semibold shadow-xs' : 'text-[#717E7B]'
-                }`}
-              >
-                ROC Curves
-              </button>
-              <button
-                type="button"
-                onClick={() => setBenchmarkView('confusion')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  benchmarkView === 'confusion' ? 'bg-white text-[#14211F] font-semibold shadow-xs' : 'text-[#717E7B]'
-                }`}
-              >
-                Confusion Matrix
-              </button>
-            </div>
-          </div>
-
-          {/* VIEW A: METRICS TABLE */}
-          {benchmarkView === 'metrics' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse font-mono text-xs">
-                <thead>
-                  <tr className="border-b border-[#E7E5E0] text-[11px] text-[#717E7B] uppercase font-sans">
-                    <th className="py-3 px-3">Model</th>
-                    <th className="py-3 px-3">Architecture</th>
-                    <th className="py-3 px-3">Accuracy</th>
-                    <th className="py-3 px-3">F1-Score</th>
-                    <th className="py-3 px-3">Sensitivity (Recall)</th>
-                    <th className="py-3 px-3">Specificity</th>
-                    <th className="py-3 px-3">ROC-AUC</th>
-                    <th className="py-3 px-3">Inference Latency</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E7E5E0]/60">
-                  <tr className="hover:bg-[#FAFAF7] transition-colors">
-                    <td className="py-3.5 px-3 font-semibold text-[#14211F] flex items-center gap-1.5 font-sans">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                      XGBoost
-                    </td>
-                    <td className="py-3.5 px-3 text-[#5B6664] font-sans">Classical Trees</td>
-                    <td className="py-3.5 px-3 font-semibold text-[#14211F]">{(xgbMetrics.accuracy * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3">{(xgbMetrics.f1 * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-emerald-700 font-semibold">{(xgbMetrics.sensitivity * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-[#14211F]">{(xgbMetrics.specificity * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E] font-semibold">{(xgbMetrics.roc_auc * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-[#5B6664]">0.0039s</td>
-                  </tr>
-
-                  <tr className="hover:bg-[#FAFAF7] transition-colors">
-                    <td className="py-3.5 px-3 font-semibold text-[#14211F] flex items-center gap-1.5 font-sans">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#0F766E]" />
-                      VQC (Variational)
-                    </td>
-                    <td className="py-3.5 px-3 text-[#5B6664] font-sans">PennyLane 4-Qubit</td>
-                    <td className="py-3.5 px-3 font-semibold text-[#14211F]">{(vqcMetrics.accuracy * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3">{(vqcMetrics.f1 * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-emerald-700 font-semibold">{(vqcMetrics.sensitivity * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-[#14211F]">{(vqcMetrics.specificity * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E] font-semibold">{(vqcMetrics.roc_auc * 100).toFixed(2)}%</td>
-                    <td className="py-3.5 px-3 text-[#5B6664]">0.4445s</td>
-                  </tr>
-
-                  <tr className="bg-[#F0FDF4]/60 font-semibold">
-                    <td className="py-3.5 px-3 text-[#0F766E] flex items-center gap-1.5 font-sans">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#0F766E] ring-2 ring-[#0F766E]/20" />
-                      Hybrid Soft-Voting
-                    </td>
-                    <td className="py-3.5 px-3 text-[#0F766E] font-sans">Consensus Ensemble</td>
-                    <td className="py-3.5 px-3 text-[#0F766E]">94.74%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E]">95.80%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E]">95.83%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E]">92.86%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E]">99.12%</td>
-                    <td className="py-3.5 px-3 text-[#0F766E]">0.4484s</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* VIEW B: ROC CURVE VISUALIZATION */}
-          {benchmarkView === 'roc' && (
-            <div className="p-6 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="font-semibold text-xs text-[#14211F]">Receiver Operating Characteristic (ROC) Space</span>
-                <div className="flex items-center gap-4 text-xs font-mono">
-                  <span className="flex items-center gap-1.5 text-amber-700">
-                    <span className="w-3 h-0.5 bg-amber-500" /> XGBoost (AUC = 0.985)
-                  </span>
-                  <span className="flex items-center gap-1.5 text-[#0F766E]">
-                    <span className="w-3 h-0.5 bg-[#0F766E]" /> VQC (AUC = 0.872)
-                  </span>
-                  <span className="flex items-center gap-1.5 text-emerald-800 font-bold">
-                    <span className="w-3 h-0.5 bg-emerald-600" /> Hybrid (AUC = 0.991)
-                  </span>
-                </div>
-              </div>
-
-              {/* Responsive SVG ROC Chart */}
-              <div className="h-64 w-full bg-white p-4 rounded-xl border border-[#E7E5E0] relative flex items-center justify-center">
-                <svg viewBox="0 0 500 240" className="w-full h-full overflow-visible">
-                  {/* Grid Lines */}
-                  <line x1="40" y1="20" x2="480" y2="20" stroke="#F0EFEA" strokeWidth="1" />
-                  <line x1="40" y1="70" x2="480" y2="70" stroke="#F0EFEA" strokeWidth="1" />
-                  <line x1="40" y1="120" x2="480" y2="120" stroke="#F0EFEA" strokeWidth="1" />
-                  <line x1="40" y1="170" x2="480" y2="170" stroke="#F0EFEA" strokeWidth="1" />
-                  <line x1="40" y1="220" x2="480" y2="220" stroke="#E7E5E0" strokeWidth="1.5" />
-                  <line x1="40" y1="20" x2="40" y2="220" stroke="#E7E5E0" strokeWidth="1.5" />
-
-                  {/* Diagonal Chance Line */}
-                  <line x1="40" y1="220" x2="480" y2="20" stroke="#D1CFCA" strokeDasharray="4 4" strokeWidth="1" />
-
-                  {/* VQC Curve */}
-                  <path
-                    d="M 40 220 Q 90 80, 200 45 T 480 20"
-                    fill="none"
-                    stroke="#0F766E"
-                    strokeWidth="2.5"
-                  />
-
-                  {/* XGBoost Curve */}
-                  <path
-                    d="M 40 220 Q 55 35, 140 26 T 480 20"
-                    fill="none"
-                    stroke="#F59E0B"
-                    strokeWidth="2.5"
-                  />
-
-                  {/* Hybrid Ensemble Curve */}
-                  <path
-                    d="M 40 220 Q 48 24, 110 22 T 480 20"
-                    fill="none"
-                    stroke="#059669"
-                    strokeWidth="3"
-                  />
-
-                  {/* Labels */}
-                  <text x="35" y="25" textAnchor="end" fontSize="10" fill="#717E7B" fontFamily="monospace">1.0</text>
-                  <text x="35" y="125" textAnchor="end" fontSize="10" fill="#717E7B" fontFamily="monospace">0.5</text>
-                  <text x="35" y="224" textAnchor="end" fontSize="10" fill="#717E7B" fontFamily="monospace">0.0</text>
-
-                  <text x="40" y="235" textAnchor="middle" fontSize="10" fill="#717E7B" fontFamily="monospace">0.0</text>
-                  <text x="260" y="235" textAnchor="middle" fontSize="10" fill="#717E7B" fontFamily="monospace">0.5 (FPR)</text>
-                  <text x="480" y="235" textAnchor="middle" fontSize="10" fill="#717E7B" fontFamily="monospace">1.0</text>
-                </svg>
-              </div>
-            </div>
-          )}
-
-          {/* VIEW C: CONFUSION MATRIX */}
-          {benchmarkView === 'confusion' && (
-            <div className="p-6 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-xs text-[#14211F]">Stratified Test Set Confusion Matrix (N = 114)</span>
-                <span className="text-[11px] font-mono text-[#0F766E]">Evaluation Mode: Binary Diagnostic Test</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                {/* 2x2 Matrix Table */}
-                <div className="border border-[#E7E5E0] rounded-xl overflow-hidden bg-white text-center font-mono text-xs">
-                  <div className="grid grid-cols-3 bg-[#FAFAF7] p-2.5 border-b border-[#E7E5E0] font-sans font-semibold text-[11px] text-[#717E7B]">
-                    <span>Actual \ Pred</span>
-                    <span>Negative (Benign)</span>
-                    <span>Positive (Malignant)</span>
-                  </div>
-                  <div className="grid grid-cols-3 p-3.5 border-b border-[#E7E5E0] items-center">
-                    <span className="font-sans font-medium text-left pl-2 text-[#5B6664]">Actual Negative</span>
-                    <div className="p-3 bg-emerald-50 text-emerald-800 rounded-lg mx-1">
-                      <div className="text-base font-bold">38</div>
-                      <div className="text-[10px]">True Negative (TN)</div>
-                    </div>
-                    <div className="p-3 bg-rose-50 text-rose-800 rounded-lg mx-1">
-                      <div className="text-base font-bold">4</div>
-                      <div className="text-[10px]">False Positive (FP)</div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 p-3.5 items-center">
-                    <span className="font-sans font-medium text-left pl-2 text-[#5B6664]">Actual Positive</span>
-                    <div className="p-3 bg-rose-50 text-rose-800 rounded-lg mx-1">
-                      <div className="text-base font-bold">4</div>
-                      <div className="text-[10px]">False Negative (FN)</div>
-                    </div>
-                    <div className="p-3 bg-emerald-50 text-emerald-800 rounded-lg mx-1">
-                      <div className="text-base font-bold">68</div>
-                      <div className="text-[10px]">True Positive (TP)</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Clinical Interpretation breakdown */}
-                <div className="space-y-3 text-xs">
-                  <div className="p-3 rounded-lg bg-white border border-[#E7E5E0]">
-                    <span className="text-[#717E7B] font-mono text-[10px] uppercase">Diagnostic Sensitivity (Recall)</span>
-                    <div className="text-lg font-bold text-emerald-700">94.44%</div>
-                    <p className="text-[11px] text-[#5B6664] mt-0.5">Identifies 68 of 72 biopsy-confirmed malignant carcinomas.</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-white border border-[#E7E5E0]">
-                    <span className="text-[#717E7B] font-mono text-[10px] uppercase">Diagnostic Specificity</span>
-                    <div className="text-lg font-bold text-[#14211F]">90.48%</div>
-                    <p className="text-[11px] text-[#5B6664] mt-0.5">Successfully avoids unnecessary invasive biopsies in 38 of 42 benign cases.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* =========================================================================
-            5. ⚡ COMPUTATIONAL PERFORMANCE & EXECUTION ANALYSIS
-           ========================================================================= */}
-        <section className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
+        <section id="clinician-feedback" className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
           <div className="pb-4 border-b border-[#E7E5E0]">
             <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
-              5. QUANTUM COMPUTATIONAL PROFILE
+              4. CLINICIAN FEEDBACK
             </span>
             <h3 className="font-serif text-2xl text-[#14211F] mt-1">
-              Execution Latency & Circuit Analysis
+              Clinician Feedback
             </h3>
             <p className="text-xs text-[#5B6664] mt-0.5">
-              Empirical assessment of computational runtime across classical gradient boosting and quantum statevector simulation.
+              {noPatientData
+                ? 'Upload patient data to review the prediction and give feedback.'
+                : 'Answer all questions and submit your feedback to unlock the PDF report.'}
             </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[11px]">Classical Training</span>
-              <div className="text-xl font-serif font-bold text-[#14211F] mt-1">0.125 s</div>
-              <span className="text-[10px] font-mono text-[#5B6664]">C++ XGBoost Multithread</span>
-            </div>
-            <div className="p-4 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[11px]">Quantum Circuit Sim</span>
-              <div className="text-xl font-serif font-bold text-[#0F766E] mt-1">6.130 s</div>
-              <span className="text-[10px] font-mono text-[#0F766E]">PennyLane default.qubit</span>
-            </div>
-            <div className="p-4 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[11px]">Quantum Register</span>
-              <div className="text-xl font-serif font-bold text-[#14211F] mt-1">4 Qubits</div>
-              <span className="text-[10px] font-mono text-[#5B6664]">3 Entangling Layers</span>
-            </div>
-            <div className="p-4 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0]">
-              <span className="text-[#717E7B] text-[11px]">Inference Latency</span>
-              <div className="text-xl font-serif font-bold text-[#14211F] mt-1">0.0039 s</div>
-              <span className="text-[10px] font-mono text-emerald-700">Sub-second Clinician SLA</span>
-            </div>
-          </div>
+          <fieldset disabled={noPatientData || feedbackSubmitted} className="space-y-4 disabled:opacity-60">
+            {FEEDBACK_QUESTIONS.map(({ id, question }, index) => (
+              <div key={id} className="p-4 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <p className="text-sm text-[#14211F] leading-relaxed">
+                  <span className="font-mono text-[#717E7B] mr-2">Q{index + 1}.</span>
+                  {question}
+                </p>
+                <div role="radiogroup" aria-label={question} className="flex gap-2 shrink-0">
+                  {['Yes', 'No'].map((answer) => {
+                    const isSelected = feedback[id] === answer;
+                    return (
+                      <label
+                        key={answer}
+                        className={`px-5 py-2 rounded-lg border text-xs font-semibold transition-colors ${
+                          noPatientData || feedbackSubmitted ? 'cursor-not-allowed' : 'cursor-pointer'
+                        } ${
+                          isSelected
+                            ? 'bg-[#0F766E] border-[#0F766E] text-white'
+                            : 'bg-white border-[#E7E5E0] text-[#5B6664] hover:border-[#0F766E]/50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={id}
+                          value={answer}
+                          checked={isSelected}
+                          onChange={() => setFeedback((prev) => ({ ...prev, [id]: answer }))}
+                          className="sr-only"
+                        />
+                        {answer}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </fieldset>
 
-          <div className="p-3.5 rounded-xl bg-[#F8FAF9] border border-[#E7E5E0] text-xs text-[#5B6664]">
-            <strong>Architectural Takeaway:</strong> Classical trees provide instantaneous throughput for triage emergency rooms. The 4-qubit VQC acts as a second-opinion verification layer, exploring non-linear boundaries in Hilbert state space without significant latency penalties.
-          </div>
-        </section>
-
-        {/* =========================================================================
-            6. 🧬 FEATURE SPACE ANALYSIS (PCA & 2D SCATTER PLOT)
-           ========================================================================= */}
-        <section className="clinical-card bg-white rounded-[20px] border border-[#E7E5E0] p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="pb-4 border-b border-[#E7E5E0]">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-[#0F766E] font-semibold bg-[#0F766E]/10 px-2 py-0.5 rounded">
-              6. DATASET & FEATURE SPACE
-            </span>
-            <h3 className="font-serif text-2xl text-[#14211F] mt-1">
-              Dimensionality Reduction & PCA Geometry
-            </h3>
-            <p className="text-xs text-[#5B6664] mt-0.5">
-              Visualizing the 30-biomarker manifold compressed into 4 orthogonal eigenvectors before quantum angle mapping.
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+            <p className="text-[11px] text-[#717E7B]">
+              {feedbackSubmitted
+                ? 'Feedback recorded. The PDF report is now available.'
+                : feedbackComplete
+                  ? 'All questions answered. Submit to unlock the report.'
+                  : `${FEEDBACK_QUESTIONS.filter(({ id }) => feedback[id]).length} of ${FEEDBACK_QUESTIONS.length} questions answered.`}
             </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-            {/* PCA Variance Distribution */}
-            <div className="space-y-3">
-              <span className="text-xs font-semibold text-[#14211F]">Explained Variance Ratio by Component</span>
-              <div className="space-y-2.5 text-xs font-mono">
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span>PC1 (Principal Axis 1)</span>
-                    <strong className="text-[#14211F]">44.3%</strong>
-                  </div>
-                  <div className="w-full bg-[#E7E5E0] h-2 rounded-full overflow-hidden">
-                    <div className="bg-[#0F766E] h-full rounded-full" style={{ width: '44.3%' }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span>PC2 (Principal Axis 2)</span>
-                    <strong className="text-[#14211F]">19.0%</strong>
-                  </div>
-                  <div className="w-full bg-[#E7E5E0] h-2 rounded-full overflow-hidden">
-                    <div className="bg-[#0F766E]/80 h-full rounded-full" style={{ width: '19.0%' }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span>PC3 (Principal Axis 3)</span>
-                    <strong className="text-[#14211F]">9.4%</strong>
-                  </div>
-                  <div className="w-full bg-[#E7E5E0] h-2 rounded-full overflow-hidden">
-                    <div className="bg-[#0F766E]/60 h-full rounded-full" style={{ width: '9.4%' }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span>PC4 (Principal Axis 4)</span>
-                    <strong className="text-[#14211F]">6.9%</strong>
-                  </div>
-                  <div className="w-full bg-[#E7E5E0] h-2 rounded-full overflow-hidden">
-                    <div className="bg-[#0F766E]/40 h-full rounded-full" style={{ width: '6.9%' }} />
-                  </div>
-                </div>
+            {feedbackSubmitted ? (
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setFeedbackSubmitted(false)}
+                  className="px-5 py-2.5 rounded-xl bg-white hover:bg-gray-50 border border-[#E7E5E0] text-[#5B6664] text-xs font-medium cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Edit Feedback</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReport(true)}
+                  className="px-5 py-2.5 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] text-white text-xs font-medium cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Generate PDF Report</span>
+                </button>
               </div>
-
-              <div className="text-[11px] font-mono text-[#0F766E] font-semibold pt-1">
-                Cumulative Explained Variance: 79.6% across 4 qubits
-              </div>
-            </div>
-
-            {/* 2D PCA Representation SVG Canvas */}
-            <div className="p-4 rounded-xl bg-[#FAFAF7] border border-[#E7E5E0] space-y-2 text-center">
-              <span className="text-[11px] font-mono text-[#717E7B] uppercase">2D PCA Projection: PC1 vs PC2</span>
-              <div className="h-48 w-full bg-white rounded-lg border border-[#E7E5E0] relative flex items-center justify-center p-2">
-                <svg viewBox="0 0 300 160" className="w-full h-full">
-                  {/* Grid center axes */}
-                  <line x1="150" y1="10" x2="150" y2="150" stroke="#E7E5E0" strokeWidth="1" strokeDasharray="2 2" />
-                  <line x1="20" y1="80" x2="280" y2="80" stroke="#E7E5E0" strokeWidth="1" strokeDasharray="2 2" />
-
-                  {/* Benign Samples (Teal clusters on left) */}
-                  <circle cx="95" cy="85" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="110" cy="70" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="80" cy="95" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="120" cy="90" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="105" cy="105" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="70" cy="75" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="130" cy="65" r="4" fill="#0F766E" opacity="0.7" />
-                  <circle cx="90" cy="60" r="4" fill="#0F766E" opacity="0.7" />
-
-                  {/* Malignant Samples (Rose clusters on right) */}
-                  <circle cx="190" cy="65" r="4" fill="#E11D48" opacity="0.7" />
-                  <circle cx="210" cy="80" r="4" fill="#E11D48" opacity="0.7" />
-                  <circle cx="225" cy="95" r="4" fill="#E11D48" opacity="0.7" />
-                  <circle cx="180" cy="100" r="4" fill="#E11D48" opacity="0.7" />
-                  <circle cx="240" cy="70" r="4" fill="#E11D48" opacity="0.7" />
-                  <circle cx="195" cy="50" r="4" fill="#E11D48" opacity="0.7" />
-                  <circle cx="215" cy="115" r="4" fill="#E11D48" opacity="0.7" />
-
-                  {/* Decision Boundary Line */}
-                  <line x1="150" y1="20" x2="160" y2="140" stroke="#0F766E" strokeWidth="1.5" />
-                </svg>
-              </div>
-              <div className="flex justify-center gap-4 text-[11px] font-mono">
-                <span className="flex items-center gap-1 text-[#0F766E]">● Benign Cluster</span>
-                <span className="flex items-center gap-1 text-rose-600">● Malignant Cluster</span>
-              </div>
-            </div>
+            ) : (
+              <button
+                type="button"
+                disabled={noPatientData || !feedbackComplete}
+                onClick={() => setFeedbackSubmitted(true)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] text-white text-xs font-medium cursor-pointer flex items-center justify-center gap-2 disabled:bg-[#F1F0EC] disabled:text-[#9AA3A1] disabled:cursor-not-allowed"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                <span>Submit Feedback</span>
+              </button>
+            )}
           </div>
         </section>
 
         {/* =========================================================================
-            8. 📋 EXPERIMENT SUMMARY & ACTION CENTER
+            8. EXPERIMENT SUMMARY & ACTION CENTER
            ========================================================================= */}
         <section className="p-7 sm:p-9 rounded-[22px] bg-gradient-to-br from-white to-[#F8FAF9] border-2 border-[#E7E5E0] shadow-sm space-y-6">
           <div className="text-center max-w-xl mx-auto space-y-2">
@@ -880,47 +611,26 @@ export default function ResultsPage({
               Experiment Summary & Next Actions
             </h3>
             <p className="text-xs text-[#5B6664]">
-              All pipeline stages, quantum circuits, and explainability attribution have executed without error.
+              {summaryStages.every(([, done]) => done)
+                ? 'All stages, quantum circuits, and explainability attribution completed for this report.'
+                : 'Stages marked pending complete once a patient file is uploaded and explained.'}
             </p>
           </div>
 
           <div className="max-w-md mx-auto grid grid-cols-2 gap-3 text-xs font-mono">
-            <div className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
-              <span className="text-[#717E7B]">Dataset Ingestion</span>
-              <strong className="text-emerald-700">✓ Done</strong>
-            </div>
-            <div className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
-              <span className="text-[#717E7B]">PCA Quantum Prep</span>
-              <strong className="text-emerald-700">✓ Done</strong>
-            </div>
-            <div className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
-              <span className="text-[#717E7B]">Classical ML (XGBoost)</span>
-              <strong className="text-emerald-700">✓ Done</strong>
-            </div>
-            <div className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
-              <span className="text-[#717E7B]">Quantum ML (VQC)</span>
-              <strong className="text-emerald-700">✓ Done</strong>
-            </div>
-            <div className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
-              <span className="text-[#717E7B]">Benchmarking Deck</span>
-              <strong className="text-emerald-700">✓ Done</strong>
-            </div>
-            <div className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
-              <span className="text-[#717E7B]">SHAP XAI Attribution</span>
-              <strong className="text-emerald-700">✓ Done</strong>
-            </div>
+            {summaryStages.map(([label, done]) => (
+              <div key={label} className="p-3 rounded-lg bg-white border border-[#E7E5E0] flex items-center justify-between">
+                <span className="text-[#717E7B]">{label}</span>
+                {done ? (
+                  <strong className="inline-flex items-center gap-1 text-emerald-700"><Check className="w-3.5 h-3.5" />Done</strong>
+                ) : (
+                  <strong className="text-[#717E7B]">Pending</strong>
+                )}
+              </div>
+            ))}
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
-            <button
-              type="button"
-              onClick={handleExportJSON}
-              className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#0F766E] hover:bg-[#0D655E] text-white font-medium text-xs shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              <span>Save Experiment JSON</span>
-            </button>
-
             <button
               type="button"
               onClick={() => onNavigateToUpload && onNavigateToUpload()}
@@ -936,12 +646,21 @@ export default function ResultsPage({
               className="w-full sm:w-auto px-6 py-3 rounded-xl bg-white hover:bg-gray-50 border border-[#E7E5E0] text-[#5B6664] font-medium text-xs transition-all cursor-pointer flex items-center justify-center gap-2 shadow-xs"
             >
               <Sliders className="w-4 h-4 text-[#5B6664]" />
-              <span>Review Pipeline Steps</span>
+              <span>Review Benchmarks</span>
             </button>
           </div>
         </section>
 
       </div>
+
+      {showReport && !reportLocked && (
+        <PatientReportModal
+          patientTest={patientTest}
+          initialPatient={selectedPatient}
+          initialPlots={patientPlots?.patient === selectedPatient ? patientPlots : null}
+          onClose={() => setShowReport(false)}
+        />
+      )}
     </div>
   );
 }
