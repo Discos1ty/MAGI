@@ -55,6 +55,13 @@ const SAMPLE_WDBC_DATA = [
   { Feature: 'Diagnosis', Type: 'Categorical', Example: 'M (Malignant)' },
 ];
 
+// Ready-made patient files (features only, no diagnosis), bundled as raw text
+const SAMPLE_PATIENT_CSVS = import.meta.glob('../assets/samples/*.csv', { query: '?raw', import: 'default', eager: true });
+const SAMPLE_PATIENT_FILES = Object.fromEntries(
+  Object.entries(SAMPLE_PATIENT_CSVS).map(([path, text]) => [path.split('/').pop(), text])
+);
+const SAMPLE_DRAG_TYPE = 'application/x-magi-sample';
+
 export default function UploadPage({ onContinueToPreprocessing, onViewPatientShap }) {
   // Upload mode: 'single' (full combined CSV) or 'split' (features.csv + target.csv)
   const [uploadMode, setUploadMode] = useState('single');
@@ -235,10 +242,21 @@ export default function UploadPage({ onContinueToPreprocessing, onViewPatientSha
     readerF.readAsText(fFile);
   };
 
+  // Process a bundled sample patient file like a user-selected CSV
+  const handleLoadSamplePatient = (name) => {
+    const text = SAMPLE_PATIENT_FILES[name];
+    if (text) processSingleCSV(new File([text], name, { type: 'text/csv' }));
+  };
+
   // Handle single file drop
   const handleSingleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
+    const sampleName = e.dataTransfer.getData(SAMPLE_DRAG_TYPE);
+    if (sampleName) {
+      handleLoadSamplePatient(sampleName);
+      return;
+    }
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const droppedFile = e.dataTransfer.files[0];
       if (droppedFile.name.toLowerCase().endsWith('.csv')) {
@@ -484,7 +502,8 @@ export default function UploadPage({ onContinueToPreprocessing, onViewPatientSha
            ========================================================================= */}
         {!datasetInfo ? (
           uploadMode === 'single' ? (
-            /* --- OPTION A: SINGLE FULL CSV DROP ZONE --- */
+            /* --- OPTION A: SINGLE FULL CSV DROP ZONE + PATIENT DATABASE SIDEBAR --- */
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-5">
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
@@ -528,6 +547,36 @@ export default function UploadPage({ onContinueToPreprocessing, onViewPatientSha
                   <span>Browse Files</span>
                 </button>
               </div>
+            </div>
+
+            {/* Patient database sidebar: click a file to select it or drag it onto the drop zone */}
+            <aside className="clinical-card bg-white p-5 rounded-[18px] border border-[#E7E5E0] flex flex-col">
+              <div className="flex items-center gap-2 mb-1">
+                <Database className="w-4 h-4 text-[#0F766E]" />
+                <h3 className="font-serif text-lg text-[#14211F]">Patient Database</h3>
+              </div>
+              <p className="text-xs text-[#5B6664] mb-4">
+                Select a file or drag it onto the upload area.
+              </p>
+              <div className="flex flex-col gap-2">
+                {Object.keys(SAMPLE_PATIENT_FILES).map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(SAMPLE_DRAG_TYPE, name);
+                      e.dataTransfer.effectAllowed = 'copy';
+                    }}
+                    onClick={() => handleLoadSamplePatient(name)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[#FAFAF7] border border-[#E7E5E0] text-left text-xs font-mono text-[#14211F] hover:border-[#0F766E]/40 hover:text-[#0F766E] transition-colors cursor-grab active:cursor-grabbing"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 shrink-0 text-[#0F766E]" />
+                    <span className="truncate">{name}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
             </div>
           ) : (
             /* --- OPTION B: DUAL SPLIT FILES DROP ZONES --- */
