@@ -1,5 +1,6 @@
 # Destination: backend/app/main.py (replaces your current file)
 
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -37,9 +38,16 @@ except ImportError as e:
     )
 
 try:
+    from app.api.prediction import bundle as prediction_bundle
     from app.api.prediction import router as prediction_router
 
     app.include_router(prediction_router)
+
+    @app.on_event("startup")
+    def warm_prediction_models():
+        # A fresh clone has no model_cache; train in the background at boot so
+        # the first patient test doesn't sit on the progress bar while it trains
+        threading.Thread(target=prediction_bundle.train_or_load, daemon=True).start()
 except ImportError as e:
     print(
         "Prediction endpoints are unavailable: "

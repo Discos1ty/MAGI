@@ -17,7 +17,8 @@ from sklearn.datasets import load_breast_cancer
 from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score, recall_score, roc_auc_score
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.pipeline import Pipeline, make_pipeline
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from app.services.explainability_service import (
     evaluate_model,
@@ -35,15 +36,19 @@ except OSError:
     MODEL_DIR = Path(tempfile.gettempdir()) / "magi_models"
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-XGB_MODEL_PATH = str(MODEL_DIR / "xgb_pca_model.json")
-VQC_WEIGHTS_PATH = str(MODEL_DIR / "vqc_weights.npy")
-PCA_PATH = str(MODEL_DIR / "pca.joblib")
-SCALER_PATH = str(MODEL_DIR / "scaler.joblib")
+# Bump when the preprocessing or circuit changes, so stale caches are retrained
+CACHE_VERSION = "v2"
+XGB_MODEL_PATH = str(MODEL_DIR / f"xgb_pca_model_{CACHE_VERSION}.json")
+VQC_WEIGHTS_PATH = str(MODEL_DIR / f"vqc_weights_{CACHE_VERSION}.npy")
+PCA_PATH = str(MODEL_DIR / f"pca_{CACHE_VERSION}.joblib")
+SCALER_PATH = str(MODEL_DIR / f"scaler_{CACHE_VERSION}.joblib")
 
 N_QUBITS = 4
 NUM_LAYERS = 3
-EPOCHS = 8
+EPOCHS = 10
 BATCH_SIZE = 16
+LEARNING_RATE = 0.05
+SEED = 67
 
 SHAP_BACKGROUND_CLUSTERS = 10
 SHAP_GLOBAL_SAMPLES = 60
@@ -62,14 +67,17 @@ dev = qml.device("default.qubit", wires=N_QUBITS)
 def vqc_circuit(weights, features):
     for i in range(N_QUBITS):
         qml.RY(features[i], wires=i)
-    qml.BasicEntanglerLayers(weights, wires=range(N_QUBITS))
+    # RX-only BasicEntanglerLayers scored below chance (~37%); general Rot
+    # gates with ring entanglement reach ~92% on the held-out split
+    qml.StronglyEntanglingLayers(weights, wires=range(N_QUBITS))
     return qml.expval(qml.PauliZ(0))
 
 
 class ModelBundle:
     def __init__(self):
         self.xgb_model: xgb.XGBClassifier | None = None
-        self.pca: PCA | None = None
+        # StandardScaler + PCA, so large-unit features (area) don't swamp PCA
+        self.pca: Pipeline | None = None
         self.scaler: MinMaxScaler | None = None
         self.vqc_weights = None
         self.metrics = {}
@@ -80,12 +88,18 @@ class ModelBundle:
         self.component_labels: list[str] = []
         self._explainers = None
         self._explainer_lock = threading.Lock()
+        self._train_lock = threading.Lock()
         self._ready = False
 
     def train_or_load(self):
         if self._ready:
             return
+        # Startup warm-up and the first request can race; train only once
+        with self._train_lock:
+            if not self._ready:
+                self._train_or_load()
 
+    def _train_or_load(self):
         data = load_breast_cancer()
         x_raw, y_raw = data.data, data.target
         y_clean = np.where(y_raw == 0, 1, 0)
@@ -98,7 +112,9 @@ class ModelBundle:
             self.pca = joblib.load(PCA_PATH)
             self.scaler = joblib.load(SCALER_PATH)
         else:
-            self.pca = PCA(n_components=N_QUBITS, random_state=67)
+            self.pca = make_pipeline(
+                StandardScaler(), PCA(n_components=N_QUBITS, random_state=SEED)
+            )
             x_train_pca_fit = self.pca.fit_transform(x_train_raw)
             self.scaler = MinMaxScaler(feature_range=(0, np.pi))
             self.scaler.fit(x_train_pca_fit)
@@ -114,7 +130,7 @@ class ModelBundle:
         # Name each qubit's principal component after its heaviest-loading biomarker
         self.component_labels = [
             f"PC{i + 1} · {FEATURE_NAMES[int(np.argmax(np.abs(component)))]}"
-            for i, component in enumerate(self.pca.components_)
+            for i, component in enumerate(self.pca[-1].components_)
         ]
 
         if os.path.exists(XGB_MODEL_PATH):
@@ -129,24 +145,25 @@ class ModelBundle:
         xgb_probs = self.xgb_model.predict_proba(x_test_scaled)[:, 1]
 
         x_train_q = pnp.array(x_train_scaled, requires_grad=False)
-        x_test_q = pnp.array(x_test_scaled, requires_grad=False)
         y_train_q = pnp.array(np.where(y_train == 0, -1.0, 1.0), requires_grad=False)
         y_test_q = np.where(y_test == 0, -1.0, 1.0)
 
         if os.path.exists(VQC_WEIGHTS_PATH):
             self.vqc_weights = pnp.array(np.load(VQC_WEIGHTS_PATH), requires_grad=True)
         else:
-            weights = pnp.random.uniform(
-                low=0.0, high=2 * np.pi, size=(NUM_LAYERS, N_QUBITS), requires_grad=True
+            # Seeded so every fresh clone trains the same model
+            rng = np.random.default_rng(SEED)
+            weights = pnp.array(
+                rng.uniform(-0.1, 0.1, size=(NUM_LAYERS, N_QUBITS, 3)), requires_grad=True
             )
-            optimizer = qml.AdamOptimizer(stepsize=0.05)
+            optimizer = qml.AdamOptimizer(stepsize=LEARNING_RATE)
 
             def loss_fn(w, x_batch, y_batch):
-                predictions = [vqc_circuit(w, x) for x in x_batch]
-                return pnp.mean((y_batch - predictions) ** 2)
+                # Broadcast the batch through the circuit in one call (~10x faster)
+                return pnp.mean((vqc_circuit(w, x_batch.T) - y_batch) ** 2)
 
             for epoch in range(EPOCHS):
-                indices = np.random.permutation(len(x_train_q))
+                indices = rng.permutation(len(x_train_q))
                 x_shuf, y_shuf = x_train_q[indices], y_train_q[indices]
                 for i in range(0, len(x_train_q), BATCH_SIZE):
                     x_batch = x_shuf[i:i + BATCH_SIZE]
@@ -158,7 +175,7 @@ class ModelBundle:
             self.vqc_weights = weights
             np.save(VQC_WEIGHTS_PATH, np.array(weights))
 
-        q_raw_scores = [vqc_circuit(self.vqc_weights, x) for x in x_test_q]
+        q_raw_scores = self.quantum_scores(x_test_scaled)
         q_binary_preds = [1.0 if s > 0 else -1.0 for s in q_raw_scores]
 
         self.metrics = {

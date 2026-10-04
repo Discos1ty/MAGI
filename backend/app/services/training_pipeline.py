@@ -11,7 +11,8 @@ class TrainingPipeline:
         self.preprocessing = PreprocessingPipeline()
         self.model_engine = ModelEngine()
 
-        self.artifact_dir = Path("data/artifacts")
+        # Anchored to backend/, not the cwd uvicorn happened to start in
+        self.artifact_dir = Path(__file__).resolve().parents[2] / "data" / "artifacts"
         self.artifact_dir.mkdir(
             parents=True,
             exist_ok=True
